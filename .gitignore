@@ -1,0 +1,19 @@
+# Python / OS cruft
+__pycache__/
+*.pyc
+*.pyo
+*.tmp
+
+# Backups created at apply time (live user data — never commit)
+backups/
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+*.swp
+
+# The packed distribution zip is shipped as a GitHub Release asset (up to 2 GB),
+# NOT committed to git (GitHub rejects repo files > 100 MB). The unzipped
+# contents of this folder are what get committed.
+lcars-installer.zip
+*.zip

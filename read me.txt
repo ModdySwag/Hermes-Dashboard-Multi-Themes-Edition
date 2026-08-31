@@ -1,0 +1,148 @@
+# Hermes LCARS Dashboard - Read Me First
+
+Built by Moddy - http://www.moddys.net
+
+This is the LCARS theme for the Hermes Agent web dashboard. After you unzip
+the download, EVERYTHING IS ALREADY HERE AND READY TO INSTALL. You do NOT
+need to unpack anything else - there is no second .zip to open.
+
+------------------------------------------------------------
+WHAT YOU SHOULD SEE IN THIS FOLDER
+------------------------------------------------------------
+
+    apply.py              - the installer script
+    apply_lcars_skin.py   - the skin engine (used by apply.py)
+    run.bat              - Windows launcher  (double-click this)
+    run.sh               - macOS / Linux launcher (double-click it)
+    lcars-bg.jpg         - the main wallpaper picture
+    lcars-bg/            - the 12 theme wallpaper pictures
+    python/              - Python installers (used only if Python is missing)
+    assets/              - licensing / attribution notes
+    LICENSE              - the MIT license
+    SECURITY.md          - security & privacy notes
+    read me.txt          - this file
+
+That is the complete package. Nothing else needs extracting.
+
+------------------------------------------------------------
+ONE-TIME: UNPACK
+------------------------------------------------------------
+
+1. Make a new, empty folder anywhere on your computer.
+   The Desktop is easiest - for example:  Desktop/Hermes-LCARS/
+
+2. Put the .zip you downloaded into that folder, then EXTRACT it there.
+
+   - Windows: right-click the .zip -> "Extract All..." -> choose the new folder.
+
+   - macOS:   double-click the .zip. macOS unzips it automatically into your
+              Downloads folder (a new folder appears there). To keep things
+              tidy, first make a folder on your Desktop (e.g. Hermes-LCARS),
+              then move the downloaded .zip into it and double-click the .zip
+              - the extracted folder will appear inside it. Or, after macOS
+              extracts it to Downloads, just drag that new folder to your
+              Desktop.
+
+   - Linux:   unzip the .zipto the new folder you just made. (or right-click -> Extract..path to new folder).
+
+3. Open the folder you just extracted. You should see the files listed
+   above (apply.py, run.bat, run.sh, lcars-bg/, python/, etc.).
+
+------------------------------------------------------------
+INSTALL
+------------------------------------------------------------
+
+WINDOWS
+  Double-click  run.bat
+  (If Python isn't installed, it opens the Python installer automatically -
+   you may see a brief "allow this app?" prompt, then run.bat waits and
+   continues on its own once Python is ready.)
+
+macOS
+  Double-click  run.sh
+  (If Python isn't installed, it opens the Python installer - you'll be asked
+   for your password to allow the install, then run.sh waits and continues on
+   its own once Python is ready.)
+
+Linux
+  Open a terminal inside this folder and run:
+     bash run.sh
+  (If Python is missing, install it:  sudo apt install python3  (Debian/Ubuntu)
+   or  sudo dnf install python3  (Fedora), then run  bash run.sh  again.)
+
+------------------------------------------------------------
+DONE
+------------------------------------------------------------
+
+Refresh your Hermes dashboard in the browser at:
+
+     http://127.0.0.1:9119/sessions
+
+------------------------------------------------------------
+LINUX - NEVER USED A TERMINAL BEFORE? (plain steps)
+------------------------------------------------------------
+
+This is written for someone who has never opened a terminal. Take it slow -
+every line you type is shown exactly as it should appear.
+
+Step 1 - Get the files
+  You downloaded a .zip file. Make a new, empty folder (the Desktop is
+  easiest). Put the .zip into it and extract it (right-click -> Extract Here,
+  or  unzip file.zip). You now have a folder with apply.py, run.sh, lcars-bg/,
+  python/, and this read me in it. Remember where it is.
+
+Step 2 - Open a terminal
+  A terminal is the window where you type commands. Open it one of these ways:
+   - Press the Super/Windows key, type  terminal, and press Enter; or
+   - Right-click the desktop or a folder and choose "Open in Terminal".
+  You will see a prompt ending in  $  - that means it is ready for typing.
+
+Step 3 - Go into the folder
+  The terminal starts in your home folder. Move into the extracted folder.
+  Type this (change the name if yours is different), then press Enter:
+
+     cd Downloads/hermes-lcars-dashboard
+
+  Tip: you can type  cd Down  and press Tab to auto-complete the rest.
+  To check you are in the right place, type  ls  and press Enter - you should
+  see  apply.py, run.sh, lcars-bg.jpg, the python/ folder, and so on.
+
+Step 4 - Run the installer
+  Type this and press Enter:
+
+     bash run.sh
+
+  That is it. run.sh is a small script that:
+   - checks whether Python 3 is installed,
+   - if it is, skins your Hermes dashboard right away,
+   - if it is NOT, helps you install Python ( sudo apt install python3 -
+     you will be asked for your password), then waits and continues on its
+     own once Python appears.
+
+Step 5 - See the result
+  Open or refresh your Hermes dashboard in your browser
+  ( http://127.0.0.1:9119/sessions ). It should now show the LCARS theme.
+
+If something goes wrong
+  - "command not found: bash" - almost never happens; bash is built into Linux.
+  - "python3: command not found" - run.sh will tell you to install Python with
+     sudo apt install python3  (Debian/Ubuntu/Mint) or
+     sudo dnf install python3  (Fedora), then run  bash run.sh  again.
+  - Prefer to run it by hand? After Step 3, just type  python3 apply.py .
+
+Step 6 - Later: revert or remove
+  Open a terminal in the folder (Steps 2-3) and run:
+
+     python3 apply.py --restore      # go back to your old dashboard
+     python3 apply.py --remove        # take the theme off completely
+
+------------------------------------------------------------
+REVERT / REMOVE (all platforms)
+------------------------------------------------------------
+
+     python3 apply.py --restore      # back to your old dashboard
+     python3 apply.py --remove        # remove the theme entirely
+
+The skin never touches your Hermes config, sessions, or keys, and it backs up
+your current dashboard automatically before the first apply - so --restore
+returns you to exactly how it looked.
