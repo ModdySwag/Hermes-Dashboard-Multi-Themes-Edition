@@ -1,6 +1,11 @@
 # Hermes LCARS Dashboard — Multi-Theme Skin
 
-A Star-Trek / LCARS themed, multi-theme reskin for the **Hermes Agent** web dashboard.
+> **Prerequisite:** This is a skin for the **Hermes Agent web dashboard**. You must have
+> Hermes Agent installed and the web dashboard enabled *before* using this mod.
+> 
+> Install/setup info: https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard
+
+An LCARS themed, multi-theme reskin for the **Hermes Agent** web dashboard.
 Visual-only, safe to apply, and it never touches your Hermes config, sessions, or keys.
 
 Built by Moddy — http://www.moddys.net · Licensed MIT.
