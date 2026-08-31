@@ -2,7 +2,7 @@
 
 > **Prerequisite:** This is a skin for the **Hermes Agent web dashboard**. You must have
 > Hermes Agent installed and the web dashboard enabled *before* using this mod.
-> 
+>
 > Install/setup info: https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard
 
 An LCARS themed, multi-theme reskin for the **Hermes Agent** web dashboard.
@@ -11,7 +11,7 @@ Visual-only, safe to apply, and it never touches your Hermes config, sessions, o
 Built by Moddy — http://www.moddys.net · Licensed MIT.
 
 ## What it does
-- 13 LCARS themes (an embedded "Enterprise Bridge" photo + 12 wallpaper themes).
+- Several LCARS themes (an embedded "Enterprise Bridge" photo + wallpaper themes).
 - One-command install: `run.bat` (Windows) or `run.sh` (macOS / Linux).
 - Auto-detects your Hermes dashboard, backs it up, and applies the skin.
 - Revert any time: `python3 apply.py --restore` · Remove: `python3 apply.py --remove`.

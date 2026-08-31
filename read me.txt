@@ -14,6 +14,7 @@ WHAT YOU SHOULD SEE IN THIS FOLDER
     apply_lcars_skin.py   - the skin engine (used by apply.py)
     run.bat              - Windows launcher  (double-click this)
     run.sh               - macOS / Linux launcher (double-click it)
+    lcars_autoheal.sh    - auto-heal watchdog (re-skins after a Hermes update)
     lcars-bg.jpg         - the main wallpaper picture
     lcars-bg/            - the 12 theme wallpaper pictures
     python/              - Python installers (used only if Python is missing)
@@ -146,6 +147,46 @@ REVERT / REMOVE (all platforms)
 The skin never touches your Hermes config, sessions, or keys, and it backs up
 your current dashboard automatically before the first apply - so --restore
 returns you to exactly how it looked.
+
+------------------------------------------------------------
+AUTO-HEAL (survives Hermes updates)
+------------------------------------------------------------
+
+Hermes updates overwrite the dashboard file (web_dist/index.html), which would
+strip the LCARS skin. This skin is built to recover automatically - you never
+have to re-run anything by hand after an update.
+
+Two layers protect it:
+
+  1. LAUNCH RE-APPLY - just open run.bat / run.sh again (or it runs on your
+     normal launch) and it re-skins the dashboard. Safe to run any time; it is
+     idempotent and will not double-apply.
+
+  2. SCHEDULED WATCHDOG (recommended) - a small script
+     (~/.hermes/scripts/lcars_autoheal.sh) is registered with Hermes as a
+     recurring job that checks every 30 minutes. If it finds the skin missing
+     (e.g. right after a Hermes update reverted it), it re-applies it and tells
+     you once. When the skin is already present it stays completely silent.
+
+  Hermes cron jobs are preserved across `hermes update`, so the watchdog keeps
+  working on Windows / macOS / Linux after every update.
+
+To set up the watchdog (one time):
+
+  # Copy the bundled watchdog into Hermes' scripts folder, then register it:
+  cp lcars_autoheal.sh "$LOCALAPPDATA/hermes/scripts/"        # Windows
+  #  macOS / Linux:  cp lcars_autoheal.sh ~/.hermes/scripts/
+
+  hermes cron create "*/30 * * * *" \
+    --name "LCARS dashboard auto-heal" \
+    --script "lcars_autoheal.sh" \
+    --no-agent --deliver local
+
+To check it is running:  hermes cron list
+To remove it:            hermes cron remove <job-id>
+
+(If you prefer not to use the scheduled job, layer 1 - re-running the launcher
+after an update - is enough to restore the theme.)
 
 ------------------------------------------------------------
 SYSTEM & BROWSER COMPATIBILITY
