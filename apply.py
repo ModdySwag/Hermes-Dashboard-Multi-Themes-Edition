@@ -16,7 +16,7 @@ Usage:
 Set HERMES_HOME if auto-detect doesn't find your install.
 
 Backups: before applying, your current web_dist/index.html (and any existing
-lcars-bg/ folder) are copied to bundle/backups/<timestamp>/. --restore puts them
+lcars-bg/ folder) are copied to backups/<timestamp>/. --restore puts them
 back. Nothing outside the Hermes dashboard folder is ever touched.
 """
 import os

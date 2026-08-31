@@ -14,6 +14,7 @@ Built by Moddy — http://www.moddys.net · Licensed MIT.
 - Several LCARS themes (an embedded "Enterprise Bridge" photo + wallpaper themes).
 - One-command install: `run.bat` (Windows) or `run.sh` (macOS / Linux).
 - Auto-detects your Hermes dashboard, backs it up, and applies the skin.
+- **Survives Hermes updates:** a bundled auto-heal watchdog (`lcars_autoheal.sh`) re-skins the dashboard after any `hermes update` — on launch and via an optional scheduled cron job. See `read me.txt` for setup.
 - Revert any time: `python3 apply.py --restore` · Remove: `python3 apply.py --remove`.
 
 ## Quick start
