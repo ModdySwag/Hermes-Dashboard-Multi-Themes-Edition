@@ -48,14 +48,5 @@ Tested headless in Chromium, Firefox, and WebKit with **zero script errors**.
 
 ## Thanks & credits
 
-   _/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_
-  /                                                             /
- /   Thanks for checking out this release                    /
-/   Enjoy the LCARS theme on your Hermes dashboard :)        /
- \                                                         /
-  \_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/
-
-      ___  ___  ___    _  _  ___  ___  _   _  ___
-     | _ \| __|/ _ \  | \| |/ _ \| __|| | | |/ __|
-     |   /| _|| (_) | | .` | (_) | _| | |_| | (_ |
-     |_|_\\|___|\___/  |_|\_|\___/|___| \___/ \___|
+  Thanks for checking out this release
+  Enjoy the LCARS theme on your Hermes dashboard :) Cheers Moddy !
