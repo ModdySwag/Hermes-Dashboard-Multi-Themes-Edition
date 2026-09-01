@@ -65,11 +65,16 @@ macOS
    for your password to allow the install, then run.sh waits and continues on
    its own once Python is ready.)
 
+  NOTE: If double-clicking run.sh doesn't work (it opens Terminal but shows
+  a "permission denied" error), right-click run.sh and choose "Open", or
+  open Terminal, navigate to this folder, and type:  bash run.sh
+  The script auto-fixes its own permissions when it detects them as missing.
+
 Linux
   Open a terminal inside this folder and run:
      bash run.sh
   (If Python is missing, install it:  sudo apt install python3  (Debian/Ubuntu)
-   or  sudo dnf install python3  (Fedora), then run  bash run.sh  again.)
+   or  sudo dnf install python3  (Fedora), then run  bash run.sh  again.
 
 ------------------------------------------------------------
 DONE
@@ -158,24 +163,28 @@ have to re-run anything by hand after an update.
 
 Two layers protect it:
 
-  1. LAUNCH RE-APPLY - just open run.bat / run.sh again (or it runs on your
+  1. LAUNCH RE--APPLY - just open run.bat / run.sh again (or it runs on your
      normal launch) and it re-skins the dashboard. Safe to run any time; it is
      idempotent and will not double-apply.
 
   2. SCHEDULED WATCHDOG (recommended) - a small script
-     (~/.hermes/scripts/lcars_autoheal.sh) is registered with Hermes as a
-     recurring job that checks every 30 minutes. If it finds the skin missing
-     (e.g. right after a Hermes update reverted it), it re-applies it and tells
-     you once. When the skin is already present it stays completely silent.
+     (lcars_autoheal.sh) is registered with Hermes as a recurring job that
+     checks every 30 minutes. If it finds the skin missing (e.g. right after
+     a Hermes update reverted it), it re-applies it and tells you once. When
+     the skin is already present it stays completely silent.
+
+  Every time you run run.bat / run.sh / apply.py, the latest version of
+  lcars_autoheal.sh is auto-copied into Hermes' scripts folder, so the
+  watchdog always runs the current code - no manual copy needed.
 
   Hermes cron jobs are preserved across `hermes update`, so the watchdog keeps
   working on Windows / macOS / Linux after every update.
 
 To set up the watchdog (one time):
 
-  # Copy the bundled watchdog into Hermes' scripts folder, then register it:
-  cp lcars_autoheal.sh "$LOCALAPPDATA/hermes/scripts/"        # Windows
-  #  macOS / Linux:  cp lcars_autoheal.sh ~/.hermes/scripts/
+  # Register the auto-heal cron job. The script is auto-synced to Hermes'
+  # scripts/ folder by apply.py / run.sh / run.bat, so you don't need to
+  # copy it manually - just register the cron job:
 
   hermes cron create "*/30 * * * *" \
     --name "LCARS dashboard auto-heal" \
@@ -197,7 +206,7 @@ http://127.0.0.1:9119/sessions). It is visual-only and safe to apply.
 
 Operating systems (where Hermes Agent runs):
   - Windows 10 / 11        -> use run.bat
-  - macOS 12 Monterey +    -> use run.sh (double-click)
+  - macOS 12 Monterey +    -> use run.sh (double-click, or  bash run.sh)
   - Linux (any modern distro: Debian/Ubuntu, Fedora, Mint, Arch, etc.) -> bash run.sh
   - Python 3.8 or newer is required. If missing, the launcher installs it
     for you from the bundled python/ installers (no internet needed).
@@ -231,4 +240,3 @@ Free to use under the MIT License (see LICENSE).
   Enjoy the LCARS theme on your Hermes dashboard :) Cheers Moddy !
 
 ------------------------------------------------------------
-
