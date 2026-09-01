@@ -350,7 +350,7 @@ __THEME_RULES__
       #lcars-panel label { white-space:nowrap; color:#ffe6c0; }
       #lcars-panel input[type="range"] {
         -webkit-appearance:none; -moz-appearance:none; appearance:none;
-        flex:1 1 auto; height:4px; border-radius:2px; cursor:pointer; outline:none;
+        flex:1 1 auto; min-width:0; height:4px; border-radius:2px; cursor:pointer; outline:none;
         background:linear-gradient(90deg, var(--lcars-blue), var(--lcars-orange));
       }
       #lcars-panel input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:14px; height:14px; border-radius:50%; background:#ffcc99; border:2px solid #000; cursor:pointer; }
