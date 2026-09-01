@@ -62,41 +62,47 @@ def fix_stale_asset_references(html, web_dist):
     """Repair stale asset-hash references in index.html.
 
     Hermes' Vite/Rolldown build emits hashed filenames like
-    ``index-BvV5s0y.js`` and writes matching references into index.html.
-    When the build is interrupted or the stamp check is fooled (e.g. by a
-    source mtime that didn't actually change), the index.html can end up
-    referencing old hashes whose files no longer exist on disk.  The
-    browser then 404s on the JS/CSS, the React app never mounts, and the
-    LCARS skin renders on top of an empty ``#root`` — the dashboard looks
-    skinned but is completely blank and non-interactive.
+    ``index-BvV5s0y.js``, ``rolldown-runtime-*.js`` and ``vendor-*.js`` and
+    writes matching references into index.html. When the build is
+    interrupted or the stamp check is fooled (e.g. by a source mtime that
+    didn't actually change), index.html can end up referencing old hashes
+    whose files no longer exist on disk. The browser then 404s on the
+    JS/CSS, the React app never mounts, and the LCARS skin renders on top
+    of an empty ``#root`` — the dashboard looks skinned but is completely
+    blank and non-interactive.
 
-    This function scans for ``/assets/index-*.{js,css}`` URLs, checks that
+    This function scans EVERY ``/assets/<name>.<ext>`` URL in the page
+    (module script src, stylesheet href, modulepreload links), checks that
     each referenced file exists on disk, and if it doesn't, replaces the
-    stale hash with the actual current ``index-*.{js,css}`` file that *does*
-    exist.  It is a no-op when references are already correct.
+    stale hash with the actual current file that *does* exist (matched by
+    name prefix). It is a no-op when references are already correct.
     """
     assets_dir = os.path.join(web_dist, "assets")
     if not os.path.isdir(assets_dir):
         return html, 0
 
-    # Build a map of extension -> actual hash for index-*.{js,css}
-    actual = {}
+    # Map (name-prefix, ext) -> on-disk hash, e.g. ("index","js") -> "BvV5s0y".
+    on_disk = {}
     for fn in os.listdir(assets_dir):
-        m = re.match(r"^index-([A-Za-z0-9]+)\.(js|css)$", fn)
+        m = re.match(r"^(.+)-([A-Za-z0-9]+)\.(js|css)$", fn)
         if m:
-            actual[m.group(2)] = m.group(1)
+            on_disk[(m.group(1), m.group(3))] = m.group(2)
 
     fixes = 0
     def _replacer(m):
         nonlocal fixes
-        ext = m.group(2)
-        ref_hash = m.group(1)
-        if ext in actual and ref_hash != actual[ext]:
+        fname = m.group(1)
+        m2 = re.match(r"^(.+)-([A-Za-z0-9]+)\.(js|css)$", fname)
+        if not m2:
+            return m.group(0)
+        prefix, ref_hash, ext = m2.group(1), m2.group(2), m2.group(3)
+        key = (prefix, ext)
+        if key in on_disk and on_disk[key] != ref_hash:
             fixes += 1
-            return "/assets/index-" + actual[ext] + "." + ext
+            return "/assets/" + prefix + "-" + on_disk[key] + "." + ext
         return m.group(0)
 
-    html = re.sub(r"/assets/index-([A-Za-z0-9]+)\.(js|css)", _replacer, html)
+    html = re.sub(r"/assets/([A-Za-z0-9_.-]+\.(?:js|css))", _replacer, html)
     return html, fixes
 
 
@@ -196,11 +202,20 @@ def build_style(uri):
         "        --midground-base:%s !important;\n"
         "        --color-card-foreground:%s !important;\n"
         "        --color-text-secondary:%s !important;\n"
+        "        --foreground:%s !important;\n"
+        "        --foreground-base:%s !important;\n"
+        "        --color-midground:%s !important;\n"
+        "        --color-ring:%s !important;\n"
+        "        --color-muted-foreground:%s !important;\n"
+        "        --color-popover-foreground:%s !important;\n"
+        "        --color-secondary-foreground:%s !important;\n"
         "      }\n" % (
             i, th["orange"], th["peach"], th["lilac"],
             th["blue"], th["red"], th["black"], _bg(uri, th["bg"]),
             th["black"], th["black"], th["peach"], th["lilac"],
             th["peach"], th["lilac"],
+            th["peach"], th["peach"], th["orange"], th["orange"],
+            th["lilac"], th["peach"], th["peach"],
         )
         for i, th in enumerate(THEMES)
     )
@@ -230,6 +245,21 @@ def build_style(uri):
         --color-primary-foreground:var(--lcars-black) !important;
         --color-border:rgba(255,153,0,0.45) !important;
         --color-text-secondary:var(--lcars-lilac) !important;
+        /* ---- Hermes v0.21.0: foreground / alpha / remaining tokens ---- */
+        --foreground:var(--lcars-peach) !important;
+        --foreground-base:var(--lcars-peach) !important;
+        --foreground-alpha:0 !important;      /* dark-scheme switch (matches built-in dark themes) */
+        --background-alpha:1 !important;
+        --midground-alpha:1 !important;
+        --color-midground:var(--lcars-orange) !important;
+        --color-muted:rgba(10,10,10,0.60) !important;
+        --color-muted-foreground:var(--lcars-lilac) !important;
+        --color-input:rgba(10,10,10,0.72) !important;
+        --color-ring:var(--lcars-orange) !important;
+        --color-popover:rgba(10,10,10,0.72) !important;
+        --color-popover-foreground:var(--lcars-peach) !important;
+        --color-secondary:rgba(10,10,10,0.72) !important;
+        --color-secondary-foreground:var(--lcars-peach) !important;
       }
       html.lcars-skin body {
         background-color: var(--lcars-black);

@@ -174,8 +174,12 @@ Two layers protect it:
      the skin is already present it stays completely silent.
 
   Every time you run run.bat / run.sh / apply.py, the latest version of
-  lcars_autoheal.sh is auto-copied into Hermes' scripts folder, so the
-  watchdog always runs the current code - no manual copy needed.
+  lcars_autoheal.sh is auto-copied into Hermes' scripts folder(s) — for the
+  main install AND every profile — so the watchdog always runs the current
+  code, no matter which profile you registered the job from. A small
+  location file (lcars_install_dir.txt) is written alongside it so the
+  watchdog can find this installer bundle wherever you extracted it
+  (Desktop, Downloads, anywhere) — no manual copy or path editing needed.
 
   Hermes cron jobs are preserved across `hermes update`, so the watchdog keeps
   working on Windows / macOS / Linux after every update.

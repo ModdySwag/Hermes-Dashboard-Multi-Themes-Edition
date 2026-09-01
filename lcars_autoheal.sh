@@ -11,15 +11,33 @@
 # Cron jobs survive `hermes update` (see update_cmd.py: restore_cron_jobs_if_emptied),
 # so this watchdog keeps working across updates on Windows / macOS / Linux.
 #
-# The LCARS installer bundle lives wherever `lcars-installer/` is. We resolve it
-# in this order: LCARS_INSTALL_DIR env -> $LOCALAPPDATA/hermes/lcars-installer
-# -> ~/lcars-installer (the actual install on MODDY's PC) -> search common roots.
+# The LCARS installer bundle can live anywhere (Desktop, Downloads, ...). We
+# resolve it in this order:
+#   1. LCARS_INSTALL_DIR env override
+#   2. lcars_install_dir.txt sidecar next to THIS script (written by apply.py
+#      into every Hermes scripts/ folder — always up to date)
+#   3. lcars_install_dir.txt in $HERMES_HOME or $HERMES_HOME/scripts
+#   4. common known locations
+#   5. any lcars-installer/ folder on the Desktop (last resort)
 
 set -u
 
 resolve_dir() {
     if [ -n "${LCARS_INSTALL_DIR:-}" ] && [ -f "${LCARS_INSTALL_DIR}/apply.py" ]; then
         echo "$LCARS_INSTALL_DIR"; return 0
+    fi
+    local here; here="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+    if [ -n "$here" ] && [ -f "$here/lcars_install_dir.txt" ]; then
+        local d; d="$(head -n1 "$here/lcars_install_dir.txt" 2>/dev/null)"
+        if [ -n "$d" ] && [ -f "$d/apply.py" ]; then echo "$d"; return 0; fi
+    fi
+    if [ -n "${HERMES_HOME:-}" ]; then
+        for base in "$HERMES_HOME" "$HERMES_HOME/scripts"; do
+            if [ -f "$base/lcars_install_dir.txt" ]; then
+                local d; d="$(head -n1 "$base/lcars_install_dir.txt" 2>/dev/null)"
+                if [ -n "$d" ] && [ -f "$d/apply.py" ]; then echo "$d"; return 0; fi
+            fi
+        done
     fi
     local home="${HOME:-$(cygpath -u "$USERPROFILE" 2>/dev/null)}"
     local localapp="${LOCALAPPDATA:-$home/AppData/Local}"
@@ -31,6 +49,11 @@ resolve_dir() {
     for c in "${candidates[@]}"; do
         if [ -f "$c/apply.py" ]; then echo "$c"; return 0; fi
     done
+    if [ -d "$home/Desktop" ]; then
+        for c in "$home"/Desktop/*/lcars-installer; do
+            if [ -f "$c/apply.py" ]; then echo "$c"; return 0; fi
+        done
+    fi
     return 1
 }
 

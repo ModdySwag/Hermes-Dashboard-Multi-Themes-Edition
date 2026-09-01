@@ -161,22 +161,40 @@ def parse_target(args):
 
 
 def sync_autoheal():
-    """Copy lcars_autoheal.sh into HERMES_HOME/scripts/ so the cron watchdog
-    always runs the latest version from this bundle. Safe to call every time."""
+    """Copy lcars_autoheal.sh (+ a bundle-location sidecar) into every
+    Hermes scripts/ folder — the default home AND every profile — so the
+    cron watchdog always runs the latest version from this bundle no matter
+    which profile registered the job or where this bundle was extracted.
+    Safe to call every time."""
     if not os.path.isfile(AUTOHEAL):
         return False
     hermes_home = find_hermes_home()
     if not hermes_home:
         return False
-    scripts_dir = os.path.join(hermes_home, "scripts")
+    scripts_dirs = [os.path.join(hermes_home, "scripts")]
+    profiles = os.path.join(hermes_home, "profiles")
+    if os.path.isdir(profiles):
+        for name in sorted(os.listdir(profiles)):
+            scripts_dirs.append(os.path.join(profiles, name, "scripts"))
+    ok = False
+    for sd in scripts_dirs:
+        try:
+            os.makedirs(sd, exist_ok=True)
+            dest = os.path.join(sd, "lcars_autoheal.sh")
+            shutil.copyfile(AUTOHEAL, dest)
+            os.chmod(dest, 0o755)
+            with open(os.path.join(sd, "lcars_install_dir.txt"), "w", encoding="utf-8") as f:
+                f.write(HERE + "\n")
+            ok = True
+        except OSError:
+            continue
     try:
-        os.makedirs(scripts_dir, exist_ok=True)
-        dest = os.path.join(scripts_dir, "lcars_autoheal.sh")
-        shutil.copyfile(AUTOHEAL, dest)
-        os.chmod(dest, 0o755)
-        return True
+        with open(os.path.join(hermes_home, "lcars_install_dir.txt"), "w", encoding="utf-8") as f:
+            f.write(HERE + "\n")
+        ok = True
     except OSError:
-        return False
+        pass
+    return ok
 
 
 def main():
