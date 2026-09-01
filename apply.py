@@ -143,7 +143,12 @@ def main():
     if not target:
         sys.stderr.write(
             "Could not find Hermes' dashboard (web_dist/index.html).\n"
-            "Make sure Hermes Agent is installed, or set HERMES_HOME, e.g.:\n"
+            "This usually means Hermes Agent is not installed yet.\n\n"
+            "To install Hermes Agent:\n"
+            "  1. Download from: https://hermes-agent.nousresearch.com/docs/user-guide/installation\n"
+            "  2. Install it (run the installer and start the Hermes dashboard)\n"
+            "  3. Then re-run this installer (run.bat / run.sh)\n\n"
+            "If Hermes IS installed but in a custom location, set HERMES_HOME:\n"
             "  Windows:  set HERMES_HOME=%LOCALAPPDATA%\\hermes\n"
             "  macOS:    export HERMES_HOME=~/Library/Application Support/hermes\n"
             "  Linux:    export HERMES_HOME=~/.local/share/hermes\n"
