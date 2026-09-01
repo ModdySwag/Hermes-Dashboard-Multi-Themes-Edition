@@ -58,6 +58,48 @@ def strip_block(s, start, end):
         s = s[:i] + s[j + len(end):]
 
 
+def fix_stale_asset_references(html, web_dist):
+    """Repair stale asset-hash references in index.html.
+
+    Hermes' Vite/Rolldown build emits hashed filenames like
+    ``index-BvV5s0y.js`` and writes matching references into index.html.
+    When the build is interrupted or the stamp check is fooled (e.g. by a
+    source mtime that didn't actually change), the index.html can end up
+    referencing old hashes whose files no longer exist on disk.  The
+    browser then 404s on the JS/CSS, the React app never mounts, and the
+    LCARS skin renders on top of an empty ``#root`` — the dashboard looks
+    skinned but is completely blank and non-interactive.
+
+    This function scans for ``/assets/index-*.{js,css}`` URLs, checks that
+    each referenced file exists on disk, and if it doesn't, replaces the
+    stale hash with the actual current ``index-*.{js,css}`` file that *does*
+    exist.  It is a no-op when references are already correct.
+    """
+    assets_dir = os.path.join(web_dist, "assets")
+    if not os.path.isdir(assets_dir):
+        return html, 0
+
+    # Build a map of extension -> actual hash for index-*.{js,css}
+    actual = {}
+    for fn in os.listdir(assets_dir):
+        m = re.match(r"^index-([A-Za-z0-9]+)\.(js|css)$", fn)
+        if m:
+            actual[m.group(2)] = m.group(1)
+
+    fixes = 0
+    def _replacer(m):
+        nonlocal fixes
+        ext = m.group(2)
+        ref_hash = m.group(1)
+        if ext in actual and ref_hash != actual[ext]:
+            fixes += 1
+            return "/assets/index-" + actual[ext] + "." + ext
+        return m.group(0)
+
+    html = re.sub(r"/assets/index-([A-Za-z0-9]+)\.(js|css)", _replacer, html)
+    return html, fixes
+
+
 def bridge_datauri():
     if not os.path.isfile(BRIDGE_JPG):
         raise SystemExit("[LCARS] bridge image missing: " + BRIDGE_JPG)
@@ -407,7 +449,10 @@ def main():
 
     uri = bridge_datauri()
     n = copy_assets(target)
+    web_dist = os.path.dirname(os.path.abspath(target))
     html = open(target, encoding="utf-8").read()
+
+    html, asset_fixes = fix_stale_asset_references(html, web_dist)
 
     for s, e in ((M_HEAD_S, M_HEAD_E), (M_STYLE_S, M_STYLE_E), (M_BODY_S, M_BODY_E)):
         html = strip_block(html, s, e)
@@ -428,6 +473,7 @@ def main():
     print("[LCARS] skin applied to " + target)
     print("[LCARS] themes: " + str(len(THEMES)))
     print("[LCARS] wallpaper files copied: " + str(n))
+    print("[LCARS] asset references repaired: " + str(asset_fixes))
     print("[LCARS] bridge photo embedded: " + ("yes" if "data:image/jpeg" in html else "NO"))
     print("[LCARS] change-theme button present: " + ("yes" if 'id="lcars-theme-btn"' in html else "NO"))
 
