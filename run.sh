@@ -8,11 +8,13 @@ if [ ! -x "$0" ]; then
     echo "Fixing file permissions..."
     chmod +x "$0" 2>/dev/null || true
 fi
-# Normalise to a Windows path when running under a POSIX shell on Windows
-# (git-bash / MSYS) so the native python can resolve apply.py correctly.
+# Determine if we're running under MSYS/Git-Bash on Windows
+# If so, we'll convert to Windows paths for the native Python call.
+MSYS_WINDOWS=0
 case "$DIR" in
-  /[a-zA-Z]/*) command -v cygpath >/dev/null 2>&1 && DIR="$(cygpath -w "$DIR")";;
+  /[a-zA-Z]/*) MSYS_WINDOWS=1 ;;
 esac
+
 PY=""
 
 if command -v python3 >/dev/null 2>&1; then PY=python3
@@ -79,7 +81,18 @@ if [ -z "$PY" ]; then
     echo "Python detected -- continuing."
 fi
 
-"$PY" "$DIR/apply.py" "$@"
+# Convert DIR to a native path for the Python subprocess if on MSYS
+# Try cygpath conversion, but fall back to native PATH if it produces invalid path
+PY_DIR="$DIR"
+if [ "$MSYS_WINDOWS" = "1" ] && command -v cygpath >/dev/null 2>&1; then
+    WIN_DIR="$(cygpath -w "$DIR")"
+    # Only use Windows path if it exists (handles /tmp virtual path edge case)
+    if [ -f "$WIN_DIR/apply.py" ] 2>/dev/null; then
+        PY_DIR="$WIN_DIR"
+    fi
+fi
+
+"$PY" "$PY_DIR/apply.py" "$@"
 RC=$?
 if [ $RC -ne 0 ]; then
     echo
@@ -87,6 +100,8 @@ if [ $RC -ne 0 ]; then
     echo "[LCARS] Common causes:"
     echo "[LCARS]   - Hermes Agent is not installed yet"
     echo "[LCARS]   - Hermes dashboard (web_dist/index.html) was not found"
+    echo "[LCARS]   - Download Hermes from: https://hermes-agent.nousresearch.com/docs/user-guide/installation"
+    echo "[LCARS]   - Then re-run this installer"
     echo "[LCARS] Run 'python3 apply.py' manually to see the full error."
     echo
     echo "Press Enter to close."
