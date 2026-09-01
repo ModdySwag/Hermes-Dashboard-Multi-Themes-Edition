@@ -146,9 +146,19 @@ def build_style(uri):
         "      html.lcars-skin.theme-%d {\n"
         "        --lcars-orange:%s; --lcars-peach:%s; --lcars-lilac:%s;\n"
         "        --lcars-blue:%s; --lcars-red:%s; --lcars-black:%s;\n"
-        "        --lcars-bg:%s;\n      }\n" % (
+        "        --lcars-bg:%s;\n"
+        "        /* Hermes v0.21.0+ per-theme overrides */\n"
+        "        --background:%s !important;\n"
+        "        --background-base:%s !important;\n"
+        "        --midground:%s !important;\n"
+        "        --midground-base:%s !important;\n"
+        "        --color-card-foreground:%s !important;\n"
+        "        --color-text-secondary:%s !important;\n"
+        "      }\n" % (
             i, th["orange"], th["peach"], th["lilac"],
             th["blue"], th["red"], th["black"], _bg(uri, th["bg"]),
+            th["black"], th["black"], th["peach"], th["lilac"],
+            th["peach"], th["lilac"],
         )
         for i, th in enumerate(THEMES)
     )
@@ -160,10 +170,24 @@ def build_style(uri):
         --lcars-blue:#6699CC; --lcars-red:#CC6666; --lcars-black:#0A0805;
         --lcars-scrim:0.72;            /* dark scrim alpha over the active bg (slider-driven) */
         --lcars-bg:__BRIDGE__;
+        /* ---- Legacy Radix/ShadCN variables (preserved for older Hermes builds) ---- */
         --bg-base:#000 !important; --bg-surface:#0a0a0a !important; --bg-elevated:#111 !important; --bg-subtle:#161616 !important;
         --text-primary:var(--lcars-peach) !important; --text-secondary:var(--lcars-lilac) !important; --text-muted:#7a7a6a !important;
         --border-subtle:rgba(102,153,204,0.25) !important; --border-strong:rgba(255,153,0,0.45) !important;
         --accent:var(--lcars-orange) !important; --accent-secondary:var(--lcars-blue) !important;
+        /* ---- Hermes v0.21.0+ CSS variables (override the built-in orange theme) ---- */
+        --background:var(--lcars-black) !important;
+        --background-base:var(--lcars-black) !important;
+        --midground:var(--lcars-peach) !important;
+        --midground-base:var(--lcars-lilac) !important;
+        --color-card:rgba(10,10,10,0.72) !important;
+        --color-card-foreground:var(--lcars-peach) !important;
+        --color-accent:var(--lcars-orange) !important;
+        --color-accent-foreground:var(--lcars-black) !important;
+        --color-primary:var(--lcars-orange) !important;
+        --color-primary-foreground:var(--lcars-black) !important;
+        --color-border:rgba(255,153,0,0.45) !important;
+        --color-text-secondary:var(--lcars-lilac) !important;
       }
       html.lcars-skin body {
         background-color: var(--lcars-black);
@@ -201,6 +225,23 @@ def build_style(uri):
       html.lcars-skin [class*="bg-background"] { background-color:transparent !important; background-image:none !important; }
       html.lcars-skin .bg-card,
       html.lcars-skin [class*="bg-card"] { background-color:rgba(10,10,10,0.72) !important; }
+      /* ---- Hermes v0.21.0: override new bg-* and text-* classes ---- */
+      html.lcars-skin .bg-midground,
+      html.lcars-skin [class*="bg-midground"] { background-color:rgba(10,10,10,0.72) !important; }
+      html.lcars-skin .bg-muted,
+      html.lcars-skin [class*="bg-muted"] { background-color:rgba(10,10,10,0.60) !important; }
+      html.lcars-skin .bg-secondary,
+      html.lcars-skin [class*="bg-secondary"] { background-color:rgba(10,10,10,0.65) !important; }
+      html.lcars-skin .bg-primary,
+      html.lcars-skin [class*="bg-primary"] { background-color:var(--lcars-black) !important; }
+      html.lcars-skin .bg-popover,
+      html.lcars-skin [class*="bg-popover"] { background-color:rgba(10,10,10,0.72) !important; }
+      html.lcars-skin .text-foreground,
+      html.lcars-skin [class*="text-foreground"] { color:var(--lcars-peach) !important; }
+      html.lcars-skin .text-muted-foreground,
+      html.lcars-skin [class*="text-muted-foreground"] { color:var(--lcars-lilac) !important; }
+      html.lcars-skin .border-border,
+      html.lcars-skin [class*="border-border"] { border-color:rgba(255,153,0,0.45) !important; }
 
       /* ===== per-theme palette overrides ===== */
 __THEME_RULES__

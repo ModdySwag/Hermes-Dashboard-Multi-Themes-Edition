@@ -35,6 +35,7 @@ if sys.version_info[0] < 3:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKIN = os.path.join(HERE, "apply_lcars_skin.py")
+AUTOHEAL = os.path.join(HERE, "lcars_autoheal.sh")
 BACKUPS = os.path.join(HERE, "backups")
 
 MARKERS = [
@@ -42,6 +43,22 @@ MARKERS = [
     "<!-- LCARS_STYLE_START -->", "<!-- LCARS_STYLE_END -->",
     "<!-- LCARS_BODY_START -->", "<!-- LCARS_BODY_END -->",
 ]
+
+
+def find_hermes_home():
+    """Locate HERMES_HOME (the data directory, not the install directory)."""
+    env = os.environ.get("HERMES_HOME")
+    if env and os.path.isdir(env):
+        return env
+    home = os.path.expanduser("~")
+    localapp = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    mac = os.path.join(home, "Library", "Application Support", "hermes")
+    xdg = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
+    for b in (localapp, mac, xdg):
+        candidate = os.path.join(b, "hermes")
+        if os.path.isdir(candidate):
+            return candidate
+    return None
 
 
 def find_target(explicit=None):
@@ -143,6 +160,25 @@ def parse_target(args):
     return None
 
 
+def sync_autoheal():
+    """Copy lcars_autoheal.sh into HERMES_HOME/scripts/ so the cron watchdog
+    always runs the latest version from this bundle. Safe to call every time."""
+    if not os.path.isfile(AUTOHEAL):
+        return False
+    hermes_home = find_hermes_home()
+    if not hermes_home:
+        return False
+    scripts_dir = os.path.join(hermes_home, "scripts")
+    try:
+        os.makedirs(scripts_dir, exist_ok=True)
+        dest = os.path.join(scripts_dir, "lcars_autoheal.sh")
+        shutil.copyfile(AUTOHEAL, dest)
+        os.chmod(dest, 0o755)
+        return True
+    except OSError:
+        return False
+
+
 def main():
     args = sys.argv[1:]
     target = parse_target(args)
@@ -166,6 +202,10 @@ def main():
     if not os.path.isfile(target):
         sys.stderr.write("Target file not found: " + target + "\n")
         sys.exit(1)
+
+    if "--print-target" in args:
+        print(target or "(not found)")
+        return
 
     if "--list-backups" in args:
         names = list_backups()
@@ -210,6 +250,8 @@ def main():
             "then run apply.py again.\n"
         )
         sys.exit(1)
+    if proc.returncode == 0 and sync_autoheal():
+        print("[LCARS] auto-heal watchdog synced to Hermes scripts/ (survives updates)")
     sys.exit(proc.returncode)
 
 
