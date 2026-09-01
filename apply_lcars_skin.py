@@ -31,19 +31,32 @@ M_STYLE_S, M_STYLE_E = "<!-- LCARS_STYLE_START -->", "<!-- LCARS_STYLE_END -->"
 M_BODY_S, M_BODY_E = "<!-- LCARS_BODY_START -->", "<!-- LCARS_BODY_END -->"
 
 
+ASSET_RE = re.compile(r"^(.+)-([A-Za-z0-9]+)\.(js|css)$")
+
+
 def copy_assets(target):
     """Copy the bundled wallpaper files into Hermes' web_dist/lcars-bg/ so the
-    non-bridge themes (1-12) resolve at /lcars-bg/*.jpg. Safe to re-run."""
+    non-bridge themes (1-12) resolve at /lcars-bg/*.jpg. Idempotent, and skips
+    files that are already in place unchanged (size + mtime)."""
     web_dist = os.path.dirname(os.path.abspath(target))
     dest = os.path.join(web_dist, "lcars-bg")
     src = os.path.join(HERE, "lcars-bg")
-    if os.path.isdir(src):
-        os.makedirs(dest, exist_ok=True)
-        for fn in os.listdir(src):
-            if fn.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
-                shutil.copyfile(os.path.join(src, fn), os.path.join(dest, fn))
-        return len(os.listdir(dest))
-    return 0
+    if not os.path.isdir(src):
+        return 0
+    os.makedirs(dest, exist_ok=True)
+    copied = 0
+    for fn in os.listdir(src):
+        if not fn.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            continue
+        s, d = os.path.join(src, fn), os.path.join(dest, fn)
+        try:
+            if not (os.path.isfile(d) and os.path.getsize(d) == os.path.getsize(s)
+                    and os.path.getmtime(d) >= os.path.getmtime(s)):
+                shutil.copyfile(s, d)
+                copied += 1
+        except OSError:
+            continue
+    return len(os.listdir(dest))
 
 
 def strip_block(s, start, end):
@@ -84,15 +97,14 @@ def fix_stale_asset_references(html, web_dist):
     # Map (name-prefix, ext) -> on-disk hash, e.g. ("index","js") -> "BvV5s0y".
     on_disk = {}
     for fn in os.listdir(assets_dir):
-        m = re.match(r"^(.+)-([A-Za-z0-9]+)\.(js|css)$", fn)
+        m = ASSET_RE.match(fn)
         if m:
             on_disk[(m.group(1), m.group(3))] = m.group(2)
 
     fixes = 0
     def _replacer(m):
         nonlocal fixes
-        fname = m.group(1)
-        m2 = re.match(r"^(.+)-([A-Za-z0-9]+)\.(js|css)$", fname)
+        m2 = ASSET_RE.match(m.group(1))
         if not m2:
             return m.group(0)
         prefix, ref_hash, ext = m2.group(1), m2.group(2), m2.group(3)

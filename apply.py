@@ -47,42 +47,39 @@ MARKERS = [
 ]
 
 
-def find_hermes_home():
-    """Locate HERMES_HOME (the data directory, not the install directory)."""
+def _data_roots():
+    """Candidate Hermes data roots for this platform, newest preference first."""
+    roots = []
     env = os.environ.get("HERMES_HOME")
-    if env and os.path.isdir(env):
-        return env
+    if env:
+        roots.append(env)
     home = os.path.expanduser("~")
     localapp = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
     mac = os.path.join(home, "Library", "Application Support", "hermes")
     xdg = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-    for b in (localapp, mac, xdg):
-        candidate = os.path.join(b, "hermes")
-        if os.path.isdir(candidate):
-            return candidate
+    roots += [os.path.join(localapp, "hermes"), mac, os.path.join(xdg, "hermes")]
+    return roots
+
+
+def find_hermes_home():
+    """Locate HERMES_HOME (the data directory, not the install directory)."""
+    for root in _data_roots():
+        if os.path.isdir(root):
+            return root
     return None
 
 
 def find_target(explicit=None):
     if explicit:
         return explicit
-    env = os.environ.get("HERMES_HOME")
-    home = os.path.expanduser("~")
-    localapp = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-    mac = os.path.join(home, "Library", "Application Support", "hermes")
-    xdg = os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share")
-    bases = []
-    if env:
-        bases += [env, os.path.join(env, "hermes-agent", "hermes_cli", "web_dist"),
-                  os.path.join(env, "hermes_cli", "web_dist")]
-    bases += [localapp, mac, xdg]
-    for b in bases:
-        cand = os.path.join(b, "hermes", "hermes-agent", "hermes_cli", "web_dist", "index.html")
-        if os.path.isfile(cand):
-            return cand
-        cand2 = os.path.join(b, "hermes-agent", "hermes_cli", "web_dist", "index.html")
-        if os.path.isfile(cand2):
-            return cand2
+    for root in _data_roots():
+        # Standard layout: <root>/hermes-agent/hermes_cli/web_dist.
+        # Also accept <root>/hermes_cli/web_dist when HERMES_HOME points
+        # directly at the install directory.
+        for rel in (("hermes-agent", "hermes_cli"), ("hermes_cli",)):
+            cand = os.path.join(root, *rel, "web_dist", "index.html")
+            if os.path.isfile(cand):
+                return cand
     return None
 
 
@@ -117,7 +114,21 @@ def make_backup(target):
                 shutil.copytree(bg, os.path.join(bd, "lcars-bg"), dirs_exist_ok=True)
         except OSError:
             continue
+    prune_backups()
     return ts
+
+
+def prune_backups(max_keep=5):
+    """Keep the newest `max_keep` backups plus the oldest (usually the ORIGINAL
+    pre-skin dashboard) in each store, so growth stays bounded on long-lived
+    machines. Best-effort; a failed prune is never fatal."""
+    for base in (BACKUPS, hermes_home_dir()):
+        if not base or not os.path.isdir(base):
+            continue
+        names = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)))
+        drop = names[1:max(0, len(names) - max_keep)]
+        for n in drop:
+            shutil.rmtree(os.path.join(base, n), ignore_errors=True)
 
 
 def hermes_home_dir():
@@ -274,7 +285,7 @@ def main():
         sys.exit(1)
 
     if "--print-target" in args:
-        print(target or "(not found)")
+        print(target)
         return
 
     if "--list-backups" in args:
@@ -291,15 +302,14 @@ def main():
         return
 
     if "--remove" in args:
-        # Full revert to the user's pre-skin state when a backup exists;
-        # otherwise strip the injected markers in place.
+        # Prefer a full revert to the user's pre-skin state (backup); if none
+        # exists, strip the injected markers in place.
         names = list_backups()
         if names:
             restore(target, names[0])
-            print("[LCARS] skin removed; original dashboard restored at " + target)
         else:
             strip_skin(target)
-            print("[LCARS] skin removed; original dashboard restored at " + target)
+        print("[LCARS] skin removed; original dashboard restored at " + target)
         return
 
     if not os.path.isfile(SKIN):
@@ -329,13 +339,9 @@ def main():
     sys.exit(proc.returncode)
 
 
-def _main():
-    main()
-
-
 if __name__ == "__main__":
     try:
-        _main()
+        main()
     except KeyboardInterrupt:
         sys.stderr.write("\n[LCARS] cancelled.\n")
         sys.exit(130)

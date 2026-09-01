@@ -83,7 +83,11 @@ if [ "$SKINNED" = "1" ]; then
 fi
 
 # Skin missing (likely reverted by a Hermes update) — re-apply it.
-OUT=$("$PY" apply.py 2>&1) || exit 0
+OUT=$("$PY" apply.py 2>&1)
 if echo "$OUT" | grep -q "skin applied"; then
     echo "[LCARS auto-heal] dashboard skin was missing — re-applied after update/revert."
+else
+    # Surface failures so a broken install can't silently rot.
+    echo "[LCARS auto-heal] WARNING: could not re-apply the skin."
+    echo "$OUT" | tail -n 3
 fi
