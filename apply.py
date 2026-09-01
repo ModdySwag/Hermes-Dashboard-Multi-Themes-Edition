@@ -25,6 +25,14 @@ import time
 import shutil
 import subprocess
 
+# Ensure we're running Python 3, not Python 2
+if sys.version_info[0] < 3:
+    sys.stderr.write(
+        "LCARS: Python 3 is required but Python 2 was detected.\n"
+        "Install Python 3 from the python/ folder in this bundle, then run apply.py again.\n"
+    )
+    sys.exit(1)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKIN = os.path.join(HERE, "apply_lcars_skin.py")
 BACKUPS = os.path.join(HERE, "backups")

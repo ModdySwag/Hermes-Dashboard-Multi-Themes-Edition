@@ -354,8 +354,14 @@ def main():
         return
     if not target:
         raise SystemExit(
-            "LCARS: could not find Hermes' dashboard (web_dist/index.html).\n"
-            "Set HERMES_HOME, pass --target, or run from the Hermes data directory."
+            "LCARS: could not find Hermes' dashboard (web_dist/index.html).\\n"
+            "This usually means Hermes Agent is not installed yet.\\n\\n"
+            "To install Hermes Agent:\\n"
+            "  1. Download from: https://hermes-agent.nousresearch.com/docs/user-guide/installation\\n"
+            "  2. Install it and start the Hermes dashboard\\n"
+            "  3. Re-run this installer\\n\\n"
+            "If Hermes IS installed but in a custom location, pass --target PATH\\n"
+            "to the full path of the dashboard's index.html file."
         )
 
     uri = bridge_datauri()

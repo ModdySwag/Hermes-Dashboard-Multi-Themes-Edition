@@ -17,8 +17,19 @@ if not defined PY (
     echo Please wait - this takes 1-2 minutes. Do NOT close this window.
     echo.
     pushd "%DIR%python"
-    start "Python Installer" /wait python-3.14.7-amd64.exe /quiet InstallAllUsers=0 PrependPath=1
+    python-3.14.7-amd64.exe /quiet InstallAllUsers=0 PrependPath=1
+    set "INSTALL_RC=%ERRORLEVEL%"
     popd
+    if not %INSTALL_RC% EQU 0 (
+        echo.
+        echo [ERROR] Python installer failed with exit code %INSTALL_RC%.
+        echo [ERROR] Try running the installer manually:
+        echo [ERROR]   Double-click: %DIR%python\python-3.14.7-amd64.exe
+        echo.
+        echo Press any key to close this window.
+        pause >nul
+        exit /b 1
+    )
     echo.
     echo Python installation finished. Refreshing environment...
     REM Add common install locations to PATH for this session (PrependPath writes to
@@ -31,26 +42,14 @@ if not defined PY (
     )
 )
 
-:wait
-set /a "WAIT_COUNT+=1" 2>nul
-if not defined WAIT_COUNT set "WAIT_COUNT=0"
+:setpy
 where python >nul 2>&1 && set "PY=python"
 if not defined PY (where py >nul 2>&1 && set "PY=py -3")
 if not defined PY (where py >nul 2>&1 && set "PY=py")
 if not defined PY (
-    if %WAIT_COUNT% GTR 60 (
-        echo.
-        echo [ERROR] Python installation timed out after 5 minutes.
-        echo [ERROR] The installer may have failed. Check Windows Event Viewer
-        echo [ERROR] or run the Python installer manually from the python/ folder.
-        echo.
-        echo Press any key to close this window.
-        pause >nul
-        exit /b 1
-    )
-    echo Still waiting for Python to become available^^. Check the installer window^^.
+    echo Still waiting for Python to become available^^. Check if the installer completed.^^.
     timeout /t 5 /nobreak >nul
-    goto wait
+    goto setpy
 )
 
 echo.

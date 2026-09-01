@@ -3,6 +3,11 @@
 # Checks for Python; if missing, opens the bundled installer and waits until
 # Python is installed, then runs apply.py with any args you passed.
 DIR="$(cd "$(dirname "$0")" && pwd)"
+# Self-fix permissions if lost during ZIP extraction on macOS/Linux
+if [ ! -x "$0" ]; then
+    echo "Fixing file permissions..."
+    chmod +x "$0" 2>/dev/null || true
+fi
 # Normalise to a Windows path when running under a POSIX shell on Windows
 # (git-bash / MSYS) so the native python can resolve apply.py correctly.
 case "$DIR" in
@@ -17,8 +22,10 @@ if [ -z "$PY" ]; then
     echo
     echo "Python was not found on this computer."
     if [ "$(uname)" = "Darwin" ]; then
-        echo "Opening the bundled Python installer -- please run it and finish the setup."
-        echo "After it completes, this window will continue automatically."
+        echo "Opening the bundled Python installer -- please follow the wizard."
+        echo "After installation completes, this window will continue automatically."
+        # Bring Terminal to front after a short delay to remind user to watch it
+        (sleep 1 && osascript -e 'tell application "Terminal" to activate' 2>/dev/null) &
         open "$DIR/python/python-3.14.7-macos11.pkg"
         echo "Waiting for Python to be installed..."
     elif [ "$(uname)" = "Linux" ] && sudo -n true 2>/dev/null; then
@@ -31,8 +38,10 @@ if [ -z "$PY" ]; then
         elif command -v pacman >/dev/null 2>&1; then
             sudo pacman -S --noconfirm python
         else
+            echo "  No supported package manager found."
             echo "  Or build from the bundled source: $DIR/python/Python-3.14.7.tar.xz"
-            echo "  Opening the python/ folder so you can install it..."
+            echo "  NOTE: Building from source requires build-essential, libssl-dev, zlib1g-dev"
+            echo "  Opening the python/ folder so you can install it manually..."
             xdg-open "$DIR/python" 2>/dev/null || true
         fi
         echo "Waiting for Python to be installed..."
@@ -41,6 +50,7 @@ if [ -z "$PY" ]; then
         echo "  Debian/Ubuntu/Mint:  sudo apt install python3"
         echo "  Fedora/RHEL:         sudo dnf install python3"
         echo "  Or build from the bundled source: $DIR/python/Python-3.14.7.tar.xz"
+        echo "  NOTE: Building from source requires build-essential, libssl-dev, zlib1g-dev"
         echo "Opening the python/ folder so you can install it..."
         xdg-open "$DIR/python" 2>/dev/null || true
         echo "Waiting for Python to be installed..."
@@ -57,6 +67,7 @@ if [ -z "$PY" ]; then
             echo "[ERROR] Python installation timed out after 5 minutes."
             echo "[ERROR] If using the bundled source, build it manually from:"
             echo "[ERROR]   $DIR/python/Python-3.14.7.tar.xz"
+            echo "[ERROR] Required: build-essential, libssl-dev, zlib1g-dev"
             echo
             read -r
             exit 1
