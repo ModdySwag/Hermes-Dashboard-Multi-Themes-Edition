@@ -427,64 +427,21 @@ def build_body():
           if (valEl) valEl.textContent = v.toFixed(2);
           if (persist) { try { localStorage.setItem("hermes-lcars-opacity", v.toFixed(2)); } catch (e) {} }
         }
-        function headerBottom() {
-          var frame = document.querySelector(".lcars-frame");
-          var fb = frame ? frame.getBoundingClientRect().bottom : 34;
-          var root = document.getElementById("root");
-          if (!root || !root.firstElementChild) return fb + 64;
-          var lay = root.firstElementChild;
-          var lb = lay.getBoundingClientRect();
-          if (lb.top < 24 || lb.top >= 200) return fb + 64;
-          var best = fb + 40;
-          var all = lay.querySelectorAll("*");
-          var vw = document.documentElement.clientWidth;
-          for (var i = 0; i < all.length && i < 3000; i++) {
-            var r = all[i].getBoundingClientRect();
-            if (r.height < 10 || r.height > 120) continue;   // header rows only, never full panes
-            if (r.width < vw * 0.6) continue;                // must span most of the viewport
-            if (r.top >= lb.top - 2 && r.top < lb.top + 140 && r.bottom > best) best = r.bottom;
-          }
-          return best + 6;
-        }
         function placeControls() {
           if (!panel.classList.contains("open")) return;
           var br = optsBtn.getBoundingClientRect();
-          // Center the panel underneath the toggle button for a clean look.
           var pw = panel.offsetWidth || 224;
-          panel.style.left = Math.round(br.left + (br.width - pw) / 2) + "px";
-          var base = Math.round(headerBottom());
-          var cap = base + 500;   // safety bound; the width filter stops the cascade
-          panel.style.top = base + "px";
+          var ph = panel.offsetHeight || 103;
           var vw = document.documentElement.clientWidth;
-          var pr = panel.getBoundingClientRect();
-          // Nudge the panel DOWN (iteratively) so it never covers narrow
-          // interactive controls — toolbar buttons, the model selector,
-          // header rows, ... — that sit below its anchor point. Full-width
-          // rows (session lists, message streams) are scrollable content and
-          // a popover may legitimately cover them, so those are excluded.
-          for (var iter = 0; iter < 8; iter++) {
-            var limit = Math.round(parseFloat(panel.style.top)) + 180;
-            var maxBottom = -1;
-            var els = document.querySelectorAll("button, a, input, select, textarea, [role='button'], [tabindex]");
-            for (var i = 0; i < els.length; i++) {
-              var el = els[i];
-              if (el.closest(".lcars-frame") || el.closest("#lcars-panel")) continue;
-              var r = el.getBoundingClientRect();
-              if (r.width === 0 || r.height === 0) continue;
-              if (r.width >= vw * 0.6) continue;              // full-width row = content
-              if (r.top < base - 20 || r.top >= limit) continue;
-              pr = panel.getBoundingClientRect();
-              if (r.right < pr.left || r.left > pr.right || r.bottom < pr.top || r.top > pr.bottom) continue;
-              if (r.bottom > maxBottom) maxBottom = r.bottom;
-            }
-            if (maxBottom < 0) break;
-            var next = Math.min(maxBottom + 8, cap);
-            if (next <= Math.round(parseFloat(panel.style.top))) break;
-            panel.style.top = next + "px";
-          }
-          pr = panel.getBoundingClientRect();
-          if (pr.right > vw - 8) panel.style.left = Math.max(8, vw - pr.width - 8) + "px";
-          if (pr.bottom > innerHeight - 8) panel.style.top = Math.max(8, innerHeight - pr.height - 8) + "px";
+          var vh = window.innerHeight;
+          // Dropdown behaviour: left-aligned with the toggle, directly beneath it.
+          var left = Math.round(br.left);
+          var top = Math.round(br.bottom + 4);
+          // Keep it fully on-screen.
+          if (left + pw > vw - 8) left = Math.max(8, vw - pw - 8);
+          if (top + ph > vh - 8) top = Math.max(8, Math.round(br.top - ph - 4));
+          panel.style.left = left + "px";
+          panel.style.top = top + "px";
         }
         function setPanel(open) {
           if (!open) { panel.classList.remove("open"); optsBtn.setAttribute("aria-expanded", "false"); return; }
