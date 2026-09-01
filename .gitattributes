@@ -1,0 +1,13 @@
+# Prevent CRLF conversion for shell scripts — they MUST stay LF on all platforms.
+# Without this, `core.autocrlf=true` (common on Windows) converts LF→CRLF on
+# checkout, which breaks shebang lines (#!bin/bash → bash\r: bad interpreter).
+run.sh       text eol=lf
+lcars_autoheal.sh  text eol=lf
+
+# Python files: CRLF would break py_compile on some systems; keep LF.
+*.py         text eol=lf
+
+# .bat files SHOULD have CRLF (Windows convention).
+*.bat        text eol=crlf
+
+# Everything else: let Git's auto rules apply.
