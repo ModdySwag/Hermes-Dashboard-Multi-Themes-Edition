@@ -22,7 +22,7 @@ if [ -z "$PY" ]; then
         open "$DIR/python/python-3.14.7-macos11.pkg"
         echo "Waiting for Python to be installed..."
     elif [ "$(uname)" = "Linux" ] && sudo -n true 2>/dev/null; then
-        # Auto-install on Linux if we have silent sudo
+        # Auto-install on Linux if we have passwordless sudo
         echo "Attempting to install Python via package manager..."
         if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update -qq && sudo apt-get install -y -qq python3
@@ -47,9 +47,20 @@ if [ -z "$PY" ]; then
     fi
     echo "(To cancel, press Ctrl-C and run 'python3 apply.py' later.)"
     echo
-    echo "Checking every 3 seconds..."
+    echo "Checking every 3 seconds... (timeout: 5 minutes)"
+    WAIT_COUNT=0
     while true; do
         sleep 3
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+        if [ $WAIT_COUNT -gt 100 ]; then
+            echo
+            echo "[ERROR] Python installation timed out after 5 minutes."
+            echo "[ERROR] If using the bundled source, build it manually from:"
+            echo "[ERROR]   $DIR/python/Python-3.14.7.tar.xz"
+            echo
+            read -r
+            exit 1
+        fi
         if command -v python3 >/dev/null 2>&1; then PY=python3; break; fi
         if command -v python  >/dev/null 2>&1; then PY=python; break; fi
         echo "  ...still waiting for Python to be installed..."

@@ -32,18 +32,30 @@ if not defined PY (
 )
 
 :wait
+set /a "WAIT_COUNT+=1" 2>nul
+if not defined WAIT_COUNT set "WAIT_COUNT=0"
 where python >nul 2>&1 && set "PY=python"
 if not defined PY (where py >nul 2>&1 && set "PY=py -3")
 if not defined PY (where py >nul 2>&1 && set "PY=py")
 if not defined PY (
-    echo Still waiting for Python to become available^^. Check if the installer completed.^^.
+    if %WAIT_COUNT% GTR 60 (
+        echo.
+        echo [ERROR] Python installation timed out after 5 minutes.
+        echo [ERROR] The installer may have failed. Check Windows Event Viewer
+        echo [ERROR] or run the Python installer manually from the python/ folder.
+        echo.
+        echo Press any key to close this window.
+        pause >nul
+        exit /b 1
+    )
+    echo Still waiting for Python to become available^^. Check the installer window^^.
     timeout /t 5 /nobreak >nul
     goto wait
 )
 
 echo.
 echo Python detected - continuing.
-"%PY%" "%DIR%apply.py" %*
+%PY% "%DIR%apply.py" %*
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo [LCARS] ERROR: the skin could not be applied.
