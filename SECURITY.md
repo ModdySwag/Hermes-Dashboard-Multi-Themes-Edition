@@ -14,8 +14,9 @@ or credentials.
 
 ## Known surfaces
 - `apply.py` writes a timestamped backup of `web_dist/index.html` into
-  `backups/` next to the bundle, and applies the skin via
-  `apply_lcars_skin.py`. `--remove` / `--restore` reverse it.
+  `backups/` next to the bundle and mirrors it into `HERMES_HOME/lcars-backups/`,
+  then applies the skin via `apply_lcars_skin.py`. `--remove` / `--restore`
+  reverse it.
 - `run.bat` (Windows) may launch the bundled Python installer with
   `/quiet PrependPath=1` only when Python is absent. Review the flags if you
   repackage.

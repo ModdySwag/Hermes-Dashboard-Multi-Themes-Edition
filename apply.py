@@ -16,8 +16,10 @@ Usage:
 Set HERMES_HOME if auto-detect doesn't find your install.
 
 Backups: before applying, your current web_dist/index.html (and any existing
-lcars-bg/ folder) are copied to backups/<timestamp>/. --restore puts them
-back. Nothing outside the Hermes dashboard folder is ever touched.
+lcars-bg/ folder) are copied to backups/<timestamp>/ next to the bundle AND
+mirrored into HERMES_HOME/lcars-backups/<timestamp>/ so they survive the
+bundle being moved or deleted. --restore puts them back. Nothing outside the
+Hermes dashboard folder is ever modified.
 """
 import os
 import sys
@@ -92,21 +94,60 @@ def has_skin(target):
 
 
 def make_backup(target):
-    os.makedirs(BACKUPS, exist_ok=True)
+    """Snapshot the current dashboard BEFORE skinning.
+
+    Written in TWO places for resilience: next to the bundle (backups/) and
+    mirrored into HERMES_HOME/lcars-backups/ so it survives the bundle being
+    moved or deleted. A small target.txt records which dashboard the backup
+    belongs to, so --restore/--remove pick the right one on multi-install
+    machines. Best-effort: a failed mirror is never fatal.
+    """
     ts = time.strftime("%Y%m%d-%H%M%S")
-    bd = os.path.join(BACKUPS, ts)
-    os.makedirs(bd, exist_ok=True)
-    shutil.copyfile(target, os.path.join(bd, "index.html"))
-    bg = os.path.join(os.path.dirname(os.path.abspath(target)), "lcars-bg")
-    if os.path.isdir(bg):
-        shutil.copytree(bg, os.path.join(bd, "lcars-bg"), dirs_exist_ok=True)
+    for base in (BACKUPS, hermes_home_dir()):
+        if not base:
+            continue
+        try:
+            bd = os.path.join(base, ts)
+            os.makedirs(bd, exist_ok=True)
+            shutil.copyfile(target, os.path.join(bd, "index.html"))
+            with open(os.path.join(bd, "target.txt"), "w", encoding="utf-8") as f:
+                f.write(os.path.abspath(target) + "\n")
+            bg = os.path.join(os.path.dirname(os.path.abspath(target)), "lcars-bg")
+            if os.path.isdir(bg):
+                shutil.copytree(bg, os.path.join(bd, "lcars-bg"), dirs_exist_ok=True)
+        except OSError:
+            continue
     return ts
 
 
+def hermes_home_dir():
+    """HERMES_HOME/lcars-backups, or None when Hermes cannot be located."""
+    h = find_hermes_home()
+    return os.path.join(h, "lcars-backups") if h else None
+
+
 def list_backups():
-    if not os.path.isdir(BACKUPS):
-        return []
-    return sorted(os.listdir(BACKUPS), reverse=True)
+    """All timestamped backups, newest first (bundle copies preferred)."""
+    names = set()
+    for base in (BACKUPS, hermes_home_dir()):
+        if not base or not os.path.isdir(base):
+            continue
+        for n in os.listdir(base):
+            p = os.path.join(base, n)
+            if os.path.isdir(p) and os.path.isfile(os.path.join(p, "index.html")):
+                names.add(n)
+    return sorted(names, reverse=True)
+
+
+def backup_path(name):
+    """Existing backup dir for a timestamp — bundle copy first, mirror second."""
+    for base in (BACKUPS, hermes_home_dir()):
+        if not base:
+            continue
+        p = os.path.join(base, name)
+        if os.path.isdir(p) and os.path.isfile(os.path.join(p, "index.html")):
+            return p
+    return None
 
 
 def restore(target, name):
@@ -115,12 +156,23 @@ def restore(target, name):
         sys.stderr.write("No backups found. Run apply.py once to create one.\n")
         sys.exit(1)
     if not name or name == "latest":
+        # Prefer a backup taken from THIS dashboard (multi-install safety).
+        wanted = os.path.abspath(target).replace("\\", "/").lower()
         name = names[0]
-    bd = os.path.join(BACKUPS, name)
-    src = os.path.join(bd, "index.html")
-    if not os.path.isdir(bd) or not os.path.isfile(src):
+        for n in names:
+            p = backup_path(n)
+            try:
+                with open(os.path.join(p, "target.txt"), encoding="utf-8") as f:
+                    if f.read().strip().replace("\\", "/").lower() == wanted:
+                        name = n
+                        break
+            except OSError:
+                continue
+    bd = backup_path(name)
+    if not bd:
         sys.stderr.write("Backup not found or incomplete: " + name + "\n")
         sys.exit(1)
+    src = os.path.join(bd, "index.html")
     shutil.copyfile(src, target)
     bg = os.path.join(os.path.dirname(os.path.abspath(target)), "lcars-bg")
     bb = os.path.join(bd, "lcars-bg")
@@ -270,8 +322,30 @@ def main():
         sys.exit(1)
     if proc.returncode == 0 and sync_autoheal():
         print("[LCARS] auto-heal watchdog synced to Hermes scripts/ (survives updates)")
+    if proc.returncode == 0 and has_skin(target):
+        print("[LCARS] verified: skin markers present in dashboard — done.")
+    elif proc.returncode == 0:
+        print("[LCARS] WARNING: skin markers not found after apply — please report this.")
     sys.exit(proc.returncode)
 
 
-if __name__ == "__main__":
+def _main():
     main()
+
+
+if __name__ == "__main__":
+    try:
+        _main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[LCARS] cancelled.\n")
+        sys.exit(130)
+    except SystemExit:
+        raise
+    except Exception as exc:  # never show a raw traceback to end users
+        sys.stderr.write(
+            "\n[LCARS] unexpected error: {0}\n"
+            "If this persists, run:  python3 apply.py --target PATH\n"
+            "(PATH = full path to your web_dist/index.html), or open an issue at\n"
+            "https://github.com/ModdySwag/Hermes-Dashboard-Multi-Themes-Edition/issues\n".format(exc)
+        )
+        sys.exit(1)

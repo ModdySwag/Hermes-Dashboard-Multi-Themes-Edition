@@ -151,7 +151,9 @@ REVERT / REMOVE (all platforms)
 
 The skin never touches your Hermes config, sessions, or keys, and it backs up
 your current dashboard automatically before the first apply - so --restore
-returns you to exactly how it looked.
+returns you to exactly how it looked. Backups are stored BOTH next to the
+bundle (backups/) AND mirrored into Hermes' data folder (lcars-backups/), so
+they survive you moving or deleting the installer folder.
 
 ------------------------------------------------------------
 AUTO-HEAL (survives Hermes updates)

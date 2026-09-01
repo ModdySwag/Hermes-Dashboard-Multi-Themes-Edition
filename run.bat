@@ -2,6 +2,7 @@
 REM run.bat - Hermes LCARS Dashboard launcher (no Python required to start).
 REM Checks for Python; if missing, runs the bundled installer and waits
 REM until Python is installed, then runs apply.py with any args you passed.
+title LCARS Dashboard Installer
 setlocal enabledelayedexpansion
 set "DIR=%~dp0"
 set "PY="
@@ -9,11 +10,19 @@ set "WAIT_COUNT=0"
 
 where python >nul 2>&1 && set "PY=python"
 if not defined PY (where py >nul 2>&1 && set "PY=py -3")
-if not defined PY (where py >nul 2>&1 && set "PY=py")
 
 if not defined PY (
     echo.
     echo Python was not found on this computer.
+    if not exist "%DIR%python\python-3.14.7-amd64.exe" (
+        echo.
+        echo [ERROR] The python\ folder is missing or incomplete.
+        echo [ERROR] Re-download lcars-installer.zip from the GitHub Releases page.
+        echo.
+        echo Press any key to close this window.
+        pause >nul
+        exit /b 1
+    )
     echo Installing Python from the bundled installer ^(quiet mode^)...
     echo Please wait - this takes 1-2 minutes. Do NOT close this window.
     echo.
@@ -45,7 +54,6 @@ if not defined PY (
 set /a WAIT_COUNT+=1 2>nul
 where python >nul 2>&1 && set "PY=python"
 if not defined PY (where py >nul 2>&1 && set "PY=py -3")
-if not defined PY (where py >nul 2>&1 && set "PY=py")
 if not defined PY (
     if !WAIT_COUNT! GTR 60 (
         echo.

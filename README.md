@@ -46,6 +46,8 @@ Tested headless in Chromium, Firefox, and WebKit with **zero script errors**.
 - The skin injects a scoped `html.lcars-skin` layer and never modifies Hermes' own
   logic, config, sessions, API keys, or data.
 - Your original dashboard is auto-backed-up on first apply; `--restore` returns it exactly.
+  Backups are mirrored into Hermes' data folder (`lcars-backups/`) so they survive you
+  moving or deleting the installer bundle.
 
 **Privacy & safety:**
 - No network calls from the skin. No telemetry. No external fonts.

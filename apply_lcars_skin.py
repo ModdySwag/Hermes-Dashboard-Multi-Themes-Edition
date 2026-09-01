@@ -342,6 +342,10 @@ __THEME_RULES__
         box-shadow:0 8px 28px rgba(0,0,0,0.60);
       }
       html.lcars-skin #lcars-panel.open { display:flex; }
+      #lcars-panel .head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:6px; margin-bottom:2px; border-bottom:1px solid rgba(255,153,0,0.35); }
+      #lcars-panel .head .title { font-size:10px; letter-spacing:0.18em; color:var(--lcars-peach); }
+      #lcars-close-btn { pointer-events:auto; border:none; background:rgba(255,153,0,0.18); color:#ffe6c0; width:20px; height:20px; border-radius:50%; cursor:pointer; font-size:10px; line-height:1; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+      #lcars-close-btn:hover { background:rgba(255,153,0,0.45); color:#fff; }
       #lcars-panel .theme-cycle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; padding:7px 12px; border-radius:16px; border:1px solid rgba(255,153,0,0.45); background:rgba(8,8,12,0.30); color:#ffe6c0; }
       #lcars-panel .theme-cycle:hover { border-color:#ff9900; color:#fff; }
       #lcars-panel .theme-cycle .ico { font-size:13px; line-height:1; }
@@ -375,7 +379,11 @@ def build_body():
       <div class="pea"></div>
       <div class="red"></div>
     </div>
-    <div id="lcars-panel">
+    <div id="lcars-panel" role="dialog" aria-label="LCARS theme options">
+      <div class="head">
+        <span class="title">Theme Options</span>
+        <button id="lcars-close-btn" type="button" aria-label="Close theme options">✕</button>
+      </div>
       <button id="lcars-theme-btn" type="button" class="theme-cycle" aria-label="Change theme">
         <span class="ico">▣</span><span class="label">Theme</span><span class="name">Enterprise Bridge</span>
       </button>
@@ -390,6 +398,7 @@ def build_body():
         var root = document.documentElement;
         var optsBtn = document.getElementById("lcars-opts-btn");
         var btn = document.getElementById("lcars-theme-btn");
+        var closeBtn = document.getElementById("lcars-close-btn");
         var panel = document.getElementById("lcars-panel");
         var slider = document.getElementById("lcars-opacity");
         var valEl = document.getElementById("lcars-opacity-val");
@@ -440,7 +449,9 @@ def build_body():
         function placeControls() {
           if (!panel.classList.contains("open")) return;
           var br = optsBtn.getBoundingClientRect();
-          panel.style.left = Math.round(br.left) + "px";
+          // Center the panel underneath the toggle button for a clean look.
+          var pw = panel.offsetWidth || 224;
+          panel.style.left = Math.round(br.left + (br.width - pw) / 2) + "px";
           var base = Math.round(headerBottom());
           var cap = base + 500;   // safety bound; the width filter stops the cascade
           panel.style.top = base + "px";
@@ -484,6 +495,17 @@ def build_body():
 
         optsBtn.addEventListener("click", function () { setPanel(!panel.classList.contains("open")); });
         btn.addEventListener("click", function () { applyTheme(currentTheme(root.className) + 1, true); });
+        if (closeBtn) closeBtn.addEventListener("click", function () { setPanel(false); });
+
+        // Close affordances: Escape key, or clicking anywhere outside the panel.
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") setPanel(false);
+        });
+        document.addEventListener("click", function (e) {
+          if (!panel.classList.contains("open")) return;
+          if (panel.contains(e.target) || optsBtn.contains(e.target)) return;
+          setPanel(false);
+        });
 
         // restore persisted choices
         try {
@@ -558,8 +580,27 @@ def main():
     print("[LCARS] wallpaper files copied: " + str(n))
     print("[LCARS] asset references repaired: " + str(asset_fixes))
     print("[LCARS] bridge photo embedded: " + ("yes" if "data:image/jpeg" in html else "NO"))
-    print("[LCARS] change-theme button present: " + ("yes" if 'id="lcars-theme-btn"' in html else "NO"))
+    print("[LCARS] theme cycler present: " + ("yes" if 'id="lcars-theme-btn"' in html else "NO"))
+    print("[LCARS] options panel present: " + ("yes" if 'id="lcars-panel"' in html else "NO"))
+
+
+def _main():
+    main()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        _main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\n[LCARS] cancelled.\n")
+        sys.exit(130)
+    except SystemExit:
+        raise
+    except Exception as exc:  # never show a raw traceback to end users
+        sys.stderr.write(
+            "\n[LCARS] unexpected error: {0}\n"
+            "If this persists, run:  python3 apply_lcars_skin.py --target PATH\n"
+            "(PATH = full path to your web_dist/index.html), or open an issue at\n"
+            "https://github.com/ModdySwag/Hermes-Dashboard-Multi-Themes-Edition/issues\n".format(exc)
+        )
+        sys.exit(1)

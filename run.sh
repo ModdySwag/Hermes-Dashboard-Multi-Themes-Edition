@@ -2,6 +2,7 @@
 # run.sh - Hermes LCARS Dashboard launcher (no Python required to start).
 # Checks for Python; if missing, opens the bundled installer and waits until
 # Python is installed, then runs apply.py with any args you passed.
+set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # Self-fix permissions if lost during ZIP extraction on macOS/Linux.
 # ZIP archives often don't preserve Unix executable bits, so scripts can
@@ -26,6 +27,15 @@ if [ -z "$PY" ]; then
     echo
     echo "Python was not found on this computer."
     if [ "$(uname)" = "Darwin" ]; then
+        if [ ! -f "$DIR/python/python-3.14.7-macos11.pkg" ]; then
+            echo
+            echo "[ERROR] The python/ folder is missing or incomplete."
+            echo "[ERROR] Re-download lcars-installer.zip from the GitHub Releases page."
+            echo
+            echo "Press Enter to close."
+            read -r
+            exit 1
+        fi
         echo "Opening the bundled Python installer -- please follow the wizard."
         echo "After installation completes, this window will continue automatically."
         # Bring Terminal to front after a short delay to remind user to watch it
