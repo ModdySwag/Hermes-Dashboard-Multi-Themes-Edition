@@ -326,15 +326,20 @@ __THEME_RULES__
         box-shadow:0 2px 14px rgba(0,0,0,0.35);
         -webkit-user-select:none; -moz-user-select:none; user-select:none;
       }
-      #lcars-opts-btn { position:fixed; z-index:10000; display:inline-flex; align-items:center; gap:8px; padding:4px 12px; border-radius:16px; cursor:pointer; line-height:1; }
+      /* The toggle lives INSIDE the LCARS frame bar (right-aligned, in-flow),
+         so it never floats over the dashboard's own header/controls. */
+      #lcars-opts-btn { pointer-events:auto; flex:0 0 auto; margin-left:auto; display:inline-flex; align-items:center; gap:8px; padding:3px 12px; border-radius:16px; cursor:pointer; line-height:1; }
       #lcars-opts-btn:hover { border-color:#ff9900; color:#fff; }
       #lcars-opts-btn .ico { font-size:13px; line-height:1; }
       #lcars-opts-btn .chev { transition:transform 0.2s ease; font-size:10px; }
       #lcars-opts-btn[aria-expanded="true"] .chev { transform:rotate(180deg); }
+      html.lcars-skin .lcars-frame .blu { gap:10px; padding-right:10px; }
       #lcars-panel {
-        position:fixed; top:40px; z-index:10000; display:none;
-        flex-direction:column; gap:10px; padding:11px 13px; border-radius:15px;
-        align-items:stretch; width:200px; font-size:11px;
+        position:fixed; z-index:10000; display:none;
+        flex-direction:column; gap:10px; padding:12px 14px; border-radius:15px;
+        align-items:stretch; width:224px; font-size:11px;
+        background:rgba(8,8,12,0.94); border:1px solid rgba(255,153,0,0.50);
+        box-shadow:0 8px 28px rgba(0,0,0,0.60);
       }
       html.lcars-skin #lcars-panel.open { display:flex; }
       #lcars-panel .theme-cycle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; padding:7px 12px; border-radius:16px; border:1px solid rgba(255,153,0,0.45); background:rgba(8,8,12,0.30); color:#ffe6c0; }
@@ -361,13 +366,15 @@ def build_body():
     <div class="lcars-frame" aria-hidden="true">
       <div class="blk">Moddys Dashboard</div>
       <div class="lil"></div>
-      <div class="blu"><span id="lcars-banner-text">USS Agent &nbsp;·&nbsp; Main Bridge</span></div>
+      <div class="blu">
+        <span id="lcars-banner-text">USS Agent &nbsp;·&nbsp; Main Bridge</span>
+        <button id="lcars-opts-btn" type="button" aria-expanded="false" aria-controls="lcars-panel">
+          <span class="ico">⚙</span><span class="label">Theme Options</span><span class="chev">▼</span>
+        </button>
+      </div>
       <div class="pea"></div>
       <div class="red"></div>
     </div>
-    <button id="lcars-opts-btn" type="button" aria-expanded="false" aria-controls="lcars-panel">
-      <span class="ico">⚙</span><span class="label">Theme Options</span><span class="chev">▼</span>
-    </button>
     <div id="lcars-panel">
       <button id="lcars-theme-btn" type="button" class="theme-cycle" aria-label="Change theme">
         <span class="ico">▣</span><span class="label">Theme</span><span class="name">Enterprise Bridge</span>
@@ -411,21 +418,67 @@ def build_body():
           if (valEl) valEl.textContent = v.toFixed(2);
           if (persist) { try { localStorage.setItem("hermes-lcars-opacity", v.toFixed(2)); } catch (e) {} }
         }
-        function placeControls() {
+        function headerBottom() {
           var frame = document.querySelector(".lcars-frame");
-          var txt = document.getElementById("lcars-banner-text");
-          if (!frame || !txt) return;
-          var fr = frame.getBoundingClientRect();
+          var fb = frame ? frame.getBoundingClientRect().bottom : 34;
+          var root = document.getElementById("root");
+          if (!root || !root.firstElementChild) return fb + 64;
+          var lay = root.firstElementChild;
+          var lb = lay.getBoundingClientRect();
+          if (lb.top < 24 || lb.top >= 200) return fb + 64;
+          var best = fb + 40;
+          var all = lay.querySelectorAll("*");
+          var vw = document.documentElement.clientWidth;
+          for (var i = 0; i < all.length && i < 3000; i++) {
+            var r = all[i].getBoundingClientRect();
+            if (r.height < 10 || r.height > 120) continue;   // header rows only, never full panes
+            if (r.width < vw * 0.6) continue;                // must span most of the viewport
+            if (r.top >= lb.top - 2 && r.top < lb.top + 140 && r.bottom > best) best = r.bottom;
+          }
+          return best + 6;
+        }
+        function placeControls() {
+          if (!panel.classList.contains("open")) return;
           var br = optsBtn.getBoundingClientRect();
-          var top = fr.top + Math.max(0, (fr.height - br.height) / 2);
-          optsBtn.style.top = Math.round(top) + "px";
-          optsBtn.style.left = Math.round(txt.getBoundingClientRect().right + 14) + "px";
+          panel.style.left = Math.round(br.left) + "px";
+          var base = Math.round(headerBottom());
+          var cap = base + 500;   // safety bound; the width filter stops the cascade
+          panel.style.top = base + "px";
+          var vw = document.documentElement.clientWidth;
+          var pr = panel.getBoundingClientRect();
+          // Nudge the panel DOWN (iteratively) so it never covers narrow
+          // interactive controls — toolbar buttons, the model selector,
+          // header rows, ... — that sit below its anchor point. Full-width
+          // rows (session lists, message streams) are scrollable content and
+          // a popover may legitimately cover them, so those are excluded.
+          for (var iter = 0; iter < 8; iter++) {
+            var limit = Math.round(parseFloat(panel.style.top)) + 180;
+            var maxBottom = -1;
+            var els = document.querySelectorAll("button, a, input, select, textarea, [role='button'], [tabindex]");
+            for (var i = 0; i < els.length; i++) {
+              var el = els[i];
+              if (el.closest(".lcars-frame") || el.closest("#lcars-panel")) continue;
+              var r = el.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) continue;
+              if (r.width >= vw * 0.6) continue;              // full-width row = content
+              if (r.top < base - 20 || r.top >= limit) continue;
+              pr = panel.getBoundingClientRect();
+              if (r.right < pr.left || r.left > pr.right || r.bottom < pr.top || r.top > pr.bottom) continue;
+              if (r.bottom > maxBottom) maxBottom = r.bottom;
+            }
+            if (maxBottom < 0) break;
+            var next = Math.min(maxBottom + 8, cap);
+            if (next <= Math.round(parseFloat(panel.style.top))) break;
+            panel.style.top = next + "px";
+          }
+          pr = panel.getBoundingClientRect();
+          if (pr.right > vw - 8) panel.style.left = Math.max(8, vw - pr.width - 8) + "px";
+          if (pr.bottom > innerHeight - 8) panel.style.top = Math.max(8, innerHeight - pr.height - 8) + "px";
         }
         function setPanel(open) {
           if (!open) { panel.classList.remove("open"); optsBtn.setAttribute("aria-expanded", "false"); return; }
-          placeControls();
-          panel.style.left = optsBtn.getBoundingClientRect().left + "px";
           panel.classList.add("open");
+          placeControls();
           optsBtn.setAttribute("aria-expanded", "true");
         }
 
