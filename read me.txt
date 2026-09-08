@@ -53,6 +53,25 @@ ONE-TIME: UNPACK
 INSTALL
 ------------------------------------------------------------
 
+WHAT THE INSTALLER CHECKS (all platforms)
+------------------------------------------------------------
+
+Before it changes anything, the installer checks itself first:
+
+  - every file it needs is present and not damaged (skin engine, bridge
+    photo, theme wallpapers),
+  - Python 3.8 or newer is available (it installs it from the python/
+    folder if not - no internet needed),
+  - your Hermes dashboard (web_dist/index.html) is found - it checks the
+    usual places first, then SEARCHES THIS PC for it,
+  - the file it found really is a Hermes dashboard (it never touches a file
+    it can't verify).
+
+If something is missing, a pop-up tells you exactly what is needed and how to
+get it, and opens the right help page for you. Missing Hermes? It points you to
+the Hermes install page. Damaged installer files? It points you back to the
+Releases page for a fresh download.
+
 WINDOWS
   Double-click  run.bat
   (If Python isn't installed, it opens the Python installer automatically -
@@ -154,6 +173,10 @@ your current dashboard automatically before the first apply - so --restore
 returns you to exactly how it looked. Backups are stored BOTH next to the
 bundle (backups/) AND mirrored into Hermes' data folder (lcars-backups/), so
 they survive you moving or deleting the installer folder.
+
+Troubleshooting readout (changes nothing):
+     python3 apply.py --check
+prints a plain report of what the installer needs and whether it is all there.
 
 ------------------------------------------------------------
 AUTO-HEAL (survives Hermes updates)

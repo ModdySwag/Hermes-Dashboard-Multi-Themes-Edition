@@ -31,9 +31,6 @@ M_STYLE_S, M_STYLE_E = "<!-- LCARS_STYLE_START -->", "<!-- LCARS_STYLE_END -->"
 M_BODY_S, M_BODY_E = "<!-- LCARS_BODY_START -->", "<!-- LCARS_BODY_END -->"
 
 
-ASSET_RE = re.compile(r"^(.+)-([A-Za-z0-9]+)\.(js|css)$")
-
-
 def copy_assets(target):
     """Copy the bundled wallpaper files into Hermes' web_dist/lcars-bg/ so the
     non-bridge themes (1-12) resolve at /lcars-bg/*.jpg. Idempotent, and skips
@@ -71,49 +68,81 @@ def strip_block(s, start, end):
         s = s[:i] + s[j + len(end):]
 
 
+def _repair_match(ref_name, disk_by_ext):
+    """Find the on-disk asset that a missing ref should point at.
+
+    Names are <family>-<hash>.<ext>; BOTH family (rolldown-runtime-*) and the
+    8-char hash (index-Cfbh-Yd9) may contain dashes, so families are matched
+    by shared leading dash-segments and the winner is the file whose name
+    shares the longest leading prefix with the stale reference. Returns None
+    when no sensible replacement exists.
+    """
+    rstem, dot, ext = ref_name.rpartition(".")
+    if ext not in disk_by_ext:
+        return None
+    rparts = rstem.split("-")
+    best, best_len = None, -1
+    for fn in disk_by_ext[ext]:
+        fparts = fn.rsplit(".", 1)[0].split("-")
+        shared = 0
+        while (shared < len(rparts) and shared < len(fparts)
+               and rparts[shared] == fparts[shared]):
+            shared += 1
+        if shared == 0:
+            continue                    # unrelated file
+        common = 0
+        for a, b in zip(ref_name, fn):
+            if a != b:
+                break
+            common += 1
+        if common > best_len or (common == best_len and fn < best):
+            best, best_len = fn, common
+    return best
+
+
 def fix_stale_asset_references(html, web_dist):
     """Repair stale asset-hash references in index.html.
 
     Hermes' Vite/Rolldown build emits hashed filenames like
-    ``index-BvV5s0y.js``, ``rolldown-runtime-*.js`` and ``vendor-*.js`` and
-    writes matching references into index.html. When the build is
-    interrupted or the stamp check is fooled (e.g. by a source mtime that
-    didn't actually change), index.html can end up referencing old hashes
-    whose files no longer exist on disk. The browser then 404s on the
-    JS/CSS, the React app never mounts, and the LCARS skin renders on top
-    of an empty ``#root`` — the dashboard looks skinned but is completely
-    blank and non-interactive.
+    ``index-Cfbh-Yd9.js``, ``rolldown-runtime-CbXtAM7H.js`` and
+    ``react-vendor-BoVnYuL4.js`` and writes matching references into
+    index.html. When the build is interrupted or the stamp check is fooled
+    (e.g. by a source mtime that didn't actually change), index.html can end
+    up referencing old hashes whose files no longer exist on disk. The
+    browser then 404s on the JS/CSS, the React app never mounts, and the
+    LCARS skin renders on top of an empty ``#root`` — the dashboard looks
+    skinned but is completely blank and non-interactive.
 
     This function scans EVERY ``/assets/<name>.<ext>`` URL in the page
-    (module script src, stylesheet href, modulepreload links), checks that
-    each referenced file exists on disk, and if it doesn't, replaces the
-    stale hash with the actual current file that *does* exist (matched by
-    name prefix). It is a no-op when references are already correct.
+    (module script src, stylesheet href, modulepreload links). A reference
+    whose file is missing on disk is rewritten to the current file of the
+    same asset family (matched by shared dash-segments + longest common
+    prefix). References that already resolve are never touched. It is a
+    no-op when references are already correct.
     """
     assets_dir = os.path.join(web_dist, "assets")
     if not os.path.isdir(assets_dir):
         return html, 0
 
-    # Map (name-prefix, ext) -> on-disk hash, e.g. ("index","js") -> "BvV5s0y".
-    on_disk = {}
-    for fn in os.listdir(assets_dir):
-        m = ASSET_RE.match(fn)
-        if m:
-            on_disk[(m.group(1), m.group(3))] = m.group(2)
+    on_disk = set(os.listdir(assets_dir))
+    disk_by_ext = {}
+    for fn in on_disk:
+        ext = fn.rpartition(".")[2]
+        if ext in ("js", "css"):
+            disk_by_ext.setdefault(ext, []).append(fn)
 
-    fixes = 0
     def _replacer(m):
         nonlocal fixes
-        m2 = ASSET_RE.match(m.group(1))
-        if not m2:
+        ref = m.group(1)
+        if ref in on_disk:              # resolves fine - leave it alone
             return m.group(0)
-        prefix, ref_hash, ext = m2.group(1), m2.group(2), m2.group(3)
-        key = (prefix, ext)
-        if key in on_disk and on_disk[key] != ref_hash:
+        match = _repair_match(ref, disk_by_ext)
+        if match:
             fixes += 1
-            return "/assets/" + prefix + "-" + on_disk[key] + "." + ext
+            return "/assets/" + match
         return m.group(0)
 
+    fixes = 0
     html = re.sub(r"/assets/([A-Za-z0-9_.-]+\.(?:js|css))", _replacer, html)
     return html, fixes
 

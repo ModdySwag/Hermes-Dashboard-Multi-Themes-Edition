@@ -18,6 +18,55 @@ case "$DIR" in
   /[a-zA-Z]/*) MSYS_WINDOWS=1 ;;
 esac
 
+# GUI alert pop-up (native per platform); falls back to a console line when no
+# pop-up tool exists (headless SSH etc). Pop-ups make sure the user is told
+# what is needed and how to fix it even if the terminal is hidden/minimized.
+popup() {
+    local title="$1" msg="$2" sys s t
+    sys="$(uname 2>/dev/null)"
+    case "$sys" in
+        Darwin)
+            s="$(printf '%s' "$msg" | tr -d '"')"
+            t="$(printf '%s' "$title" | tr -d '"')"
+            osascript -e "display dialog \"$s\" with title \"$t\" buttons {\"OK\"} default button \"OK\" with icon caution" >/dev/null 2>&1 || true
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            s="$(printf '%s' "$msg" | sed "s/'/''/g")"
+            t="$(printf '%s' "$title" | sed "s/'/''/g")"
+            powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.Forms.MessageBox]::Show('$s','$t','OK','Warning')" >/dev/null 2>&1 || true
+            ;;
+        Linux)
+            if command -v zenity >/dev/null 2>&1; then
+                zenity --warning --title "$title" --text "$msg" --width 480 >/dev/null 2>&1 || true
+            elif command -v kdialog >/dev/null 2>&1; then
+                kdialog --title "$title" --sorry "$msg" >/dev/null 2>&1 || true
+            elif command -v xmessage >/dev/null 2>&1; then
+                xmessage -center -buttons OK "$title: $msg" >/dev/null 2>&1 || true
+            else
+                echo "[LCARS] $title - $msg" >&2
+            fi
+            ;;
+        *)
+            echo "[LCARS] $title - $msg" >&2
+            ;;
+    esac
+}
+
+# Pop-up message texts (kept here so call sites stay short and readable).
+MSG_PY_PKG_MISSING="The python folder is missing or incomplete. Re-download \
+lcars-installer.zip from the GitHub Releases page and extract it again."
+MSG_PY_INSTALL="Python 3 is not installed. Install it with: \
+sudo apt install python3 (Debian/Ubuntu/Mint), \
+sudo dnf install python3 (Fedora), or sudo pacman -S python (Arch). \
+Or build it from the bundled source in the python folder \
+(needs build-essential, libssl-dev, zlib1g-dev). Then run bash run.sh again."
+MSG_PY_NO_PKGMGR="Python 3 is not installed and no supported package manager \
+was found. Install Python 3, or build it from the bundled source in the python \
+folder (needs build-essential, libssl-dev, zlib1g-dev). Then run bash run.sh again."
+MSG_PY_TIMEOUT="Python did not become available within 5 minutes. Install \
+Python 3 manually (sudo apt install python3 / sudo dnf install python3 / the \
+bundled pkg), then run: bash run.sh"
+
 PY=""
 
 if command -v python3 >/dev/null 2>&1; then PY=python3
@@ -32,6 +81,7 @@ if [ -z "$PY" ]; then
             echo "[ERROR] The python/ folder is missing or incomplete."
             echo "[ERROR] Re-download lcars-installer.zip from the GitHub Releases page."
             echo
+            popup "Python installer missing" "$MSG_PY_PKG_MISSING"
             echo "Press Enter to close."
             read -r
             exit 1
@@ -57,6 +107,7 @@ if [ -z "$PY" ]; then
             echo "  NOTE: Building from source requires build-essential, libssl-dev, zlib1g-dev"
             echo "  Opening the python/ folder so you can install it manually..."
             xdg-open "$DIR/python" 2>/dev/null || true
+            popup "Install Python 3" "$MSG_PY_NO_PKGMGR"
         fi
         echo "Waiting for Python to be installed..."
     else
@@ -67,6 +118,7 @@ if [ -z "$PY" ]; then
         echo "  NOTE: Building from source requires build-essential, libssl-dev, zlib1g-dev"
         echo "Opening the python/ folder so you can install it..."
         xdg-open "$DIR/python" 2>/dev/null || true
+        popup "Install Python 3" "$MSG_PY_INSTALL"
         echo "Waiting for Python to be installed..."
     fi
     echo "(To cancel, press Ctrl-C and run 'python3 apply.py' later.)"
@@ -83,6 +135,7 @@ if [ -z "$PY" ]; then
             echo "[ERROR]   $DIR/python/Python-3.14.7.tar.xz"
             echo "[ERROR] Required: build-essential, libssl-dev, zlib1g-dev"
             echo
+            popup "Python install timed out" "$MSG_PY_TIMEOUT"
             read -r
             exit 1
         fi

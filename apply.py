@@ -2,15 +2,29 @@
 """apply.py - one-command installer for the Hermes LCARS Dashboard skin.
 
 Assumes Hermes Agent (and its dashboard) is ALREADY installed and configured on
-this machine. This script just FINDS the dashboard, copies the LCARS skin into
-it, and applies it. No venv, no pip, no network.
+this machine. This script FINDS the dashboard, copies the LCARS skin into it,
+and applies it. No venv, no pip, no network.
+
+On every platform (Windows / macOS / Linux) it:
+  1. checks the installer bundle is complete and uncorrupted,
+  2. checks Python 3.8+ is running,
+  3. locates Hermes' dashboard (web_dist/index.html) - standard locations
+     first, then a bounded search of this computer,
+  4. verifies the found file is a real, structurally sound Hermes dashboard,
+  5. backs the current dashboard up, then applies the skin and verifies it.
+
+If something required is missing, it pops up a dialog telling you exactly what
+is needed and how to get/install it (and opens the right help page). On
+headless/SSH sessions the same message is printed to the console instead.
 
 Usage:
-  python3 apply.py                 # find Hermes, back up current config, apply skin
+  python3 apply.py                 # find Hermes, back up, apply skin
   python3 apply.py --remove        # strip the skin entirely (restore original looks)
   python3 apply.py --restore       # revert to your most recent pre-skin backup
   python3 apply.py --restore NAME  # revert to a specific backup (see --list-backups)
   python3 apply.py --list-backups  # show saved backups
+  python3 apply.py --check         # report bundle + dashboard readiness, change nothing
+  python3 apply.py --print-target  # print the resolved dashboard path, change nothing
   python3 apply.py --target C:\\path\\to\\web_dist\\index.html   # explicit path
 
 Set HERMES_HOME if auto-detect doesn't find your install.
@@ -21,19 +35,32 @@ mirrored into HERMES_HOME/lcars-backups/<timestamp>/ so they survive the
 bundle being moved or deleted. --restore puts them back. Nothing outside the
 Hermes dashboard folder is ever modified.
 """
-import os
+
 import sys
-import time
+
+# Python-version gate BEFORE importing anything else: preflight.py is 3.8+ and
+# the skin engine needs 3.8 features (dirs_exist_ok), so fail with clear
+# instructions instead of a confusing traceback on older interpreters.
+if sys.version_info < (3, 8):
+    sys.stderr.write(
+        "[LCARS] Python 3.8 or newer is required to run this installer.\n"
+        "[LCARS] You are running Python {0}.{1}.\n"
+        "[LCARS] Install it like this:\n"
+        "[LCARS]   Windows: re-run run.bat - it installs the bundled Python for you.\n"
+        "[LCARS]   macOS:   open the bundled  python/python-3.14.7-macos11.pkg\n"
+        "[LCARS]   Linux:   sudo apt install python3    (Debian/Ubuntu/Mint)\n"
+        "[LCARS]            sudo dnf install python3    (Fedora)\n"
+        "[LCARS]            sudo pacman -S python       (Arch)\n"
+        "[LCARS]   Or download Python from https://www.python.org/downloads/\n"
+    ).format(sys.version_info[0], sys.version_info[1])
+    sys.exit(1)
+
+import os
 import shutil
 import subprocess
+import time
 
-# Ensure we're running Python 3, not Python 2
-if sys.version_info[0] < 3:
-    sys.stderr.write(
-        "LCARS: Python 3 is required but Python 2 was detected.\n"
-        "Install Python 3 from the python/ folder in this bundle, then run apply.py again.\n"
-    )
-    sys.exit(1)
+import preflight
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKIN = os.path.join(HERE, "apply_lcars_skin.py")
@@ -83,11 +110,54 @@ def find_target(explicit=None):
     return None
 
 
+def hermes_root_from_target(target):
+    """Derive the Hermes data root from a dashboard path found outside the
+    standard locations (e.g. by the PC search), so backups and the auto-heal
+    watchdog still land in the real Hermes data folder.
+
+    Accepts <root>/hermes-agent/hermes_cli/web_dist or <root>/hermes_cli/web_dist.
+    Returns None when the path follows neither layout.
+    """
+    web_dist = os.path.dirname(os.path.abspath(target))
+    layout_agent = os.path.normpath(os.path.join("hermes-agent", "hermes_cli", "web_dist"))
+    layout_direct = os.path.normpath(os.path.join("hermes_cli", "web_dist"))
+
+    # Pass 1: the canonical <root>/hermes-agent/hermes_cli/web_dist layout.
+    cur = web_dist
+    for _ in range(4):
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        if os.path.normpath(os.path.relpath(web_dist, parent)) == layout_agent:
+            return parent
+        cur = parent
+    # Pass 2: <root>/hermes_cli/web_dist (HERMES_HOME points at the data dir
+    # which contains hermes_cli directly). Must not mistake hermes-agent/ for
+    # the root, hence the separate pass.
+    cur = web_dist
+    for _ in range(4):
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        if os.path.normpath(os.path.relpath(web_dist, parent)) == layout_direct:
+            return parent
+        cur = parent
+    return None
+
+
 def has_skin(target):
     try:
         return MARKERS[0] in open(target, encoding="utf-8", errors="replace").read()
     except OSError:
         return False
+
+
+def hermes_home_dir(target=None):
+    """Hermes data root + lcars-backups, or None when Hermes cannot be located."""
+    h = find_hermes_home()
+    if not h and target:
+        h = hermes_root_from_target(target)
+    return os.path.join(h, "lcars-backups") if h else None
 
 
 def make_backup(target):
@@ -100,7 +170,7 @@ def make_backup(target):
     machines. Best-effort: a failed mirror is never fatal.
     """
     ts = time.strftime("%Y%m%d-%H%M%S")
-    for base in (BACKUPS, hermes_home_dir()):
+    for base in (BACKUPS, hermes_home_dir(target)):
         if not base:
             continue
         try:
@@ -114,15 +184,15 @@ def make_backup(target):
                 shutil.copytree(bg, os.path.join(bd, "lcars-bg"), dirs_exist_ok=True)
         except OSError:
             continue
-    prune_backups()
+    prune_backups(target)
     return ts
 
 
-def prune_backups(max_keep=5):
+def prune_backups(target=None, max_keep=5):
     """Keep the newest `max_keep` backups plus the oldest (usually the ORIGINAL
     pre-skin dashboard) in each store, so growth stays bounded on long-lived
     machines. Best-effort; a failed prune is never fatal."""
-    for base in (BACKUPS, hermes_home_dir()):
+    for base in (BACKUPS, hermes_home_dir(target)):
         if not base or not os.path.isdir(base):
             continue
         names = sorted(n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n)))
@@ -131,16 +201,10 @@ def prune_backups(max_keep=5):
             shutil.rmtree(os.path.join(base, n), ignore_errors=True)
 
 
-def hermes_home_dir():
-    """HERMES_HOME/lcars-backups, or None when Hermes cannot be located."""
-    h = find_hermes_home()
-    return os.path.join(h, "lcars-backups") if h else None
-
-
-def list_backups():
+def list_backups(target=None):
     """All timestamped backups, newest first (bundle copies preferred)."""
     names = set()
-    for base in (BACKUPS, hermes_home_dir()):
+    for base in (BACKUPS, hermes_home_dir(target)):
         if not base or not os.path.isdir(base):
             continue
         for n in os.listdir(base):
@@ -150,9 +214,9 @@ def list_backups():
     return sorted(names, reverse=True)
 
 
-def backup_path(name):
+def backup_path(name, target=None):
     """Existing backup dir for a timestamp — bundle copy first, mirror second."""
-    for base in (BACKUPS, hermes_home_dir()):
+    for base in (BACKUPS, hermes_home_dir(target)):
         if not base:
             continue
         p = os.path.join(base, name)
@@ -162,7 +226,7 @@ def backup_path(name):
 
 
 def restore(target, name):
-    names = list_backups()
+    names = list_backups(target)
     if not names:
         sys.stderr.write("No backups found. Run apply.py once to create one.\n")
         sys.exit(1)
@@ -171,7 +235,7 @@ def restore(target, name):
         wanted = os.path.abspath(target).replace("\\", "/").lower()
         name = names[0]
         for n in names:
-            p = backup_path(n)
+            p = backup_path(n, target)
             try:
                 with open(os.path.join(p, "target.txt"), encoding="utf-8") as f:
                     if f.read().strip().replace("\\", "/").lower() == wanted:
@@ -179,7 +243,7 @@ def restore(target, name):
                         break
             except OSError:
                 continue
-    bd = backup_path(name)
+    bd = backup_path(name, target)
     if not bd:
         sys.stderr.write("Backup not found or incomplete: " + name + "\n")
         sys.exit(1)
@@ -223,7 +287,7 @@ def parse_target(args):
     return None
 
 
-def sync_autoheal():
+def sync_autoheal(target=None):
     """Copy lcars_autoheal.sh (+ a bundle-location sidecar) into every
     Hermes scripts/ folder — the default home AND every profile — so the
     cron watchdog always runs the latest version from this bundle no matter
@@ -232,6 +296,8 @@ def sync_autoheal():
     if not os.path.isfile(AUTOHEAL):
         return False
     hermes_home = find_hermes_home()
+    if not hermes_home and target:
+        hermes_home = hermes_root_from_target(target)
     if not hermes_home:
         return False
     scripts_dirs = [os.path.join(hermes_home, "scripts")]
@@ -260,36 +326,81 @@ def sync_autoheal():
     return ok
 
 
+def _not_found(target, explicit, gui):
+    """Dashboard could not be found anywhere: tell the user what is needed and
+    how to get/install it (pop-up + console + open the install guide)."""
+    msg = (
+        "The installer could not find your Hermes dashboard "
+        "(web_dist/index.html).\n\n"
+        "This skin is applied ON TOP of the Hermes Agent web dashboard - "
+        "Hermes must be installed and its web dashboard started at least once "
+        "before this installer can do anything.\n\n"
+        "What to do:\n"
+        "  1. Install Hermes Agent from:\n"
+        "     " + preflight.HERMES_INSTALL_URL + "\n"
+        "  2. Start Hermes and open the web dashboard "
+        "(http://127.0.0.1:9119)\n"
+        "  3. Run this installer again (run.bat / run.sh)\n\n"
+        "Already installed somewhere unusual? Point at it directly:\n"
+        "  python3 apply.py --target FULL/PATH/TO/web_dist/index.html\n"
+        "  (or set HERMES_HOME to your Hermes data folder)"
+    )
+    preflight.notify("Hermes Dashboard Not Found", msg, gui=gui)
+    if gui:
+        preflight.open_url(preflight.HERMES_INSTALL_URL)
+    sys.exit(1)
+
+
 def main():
     args = sys.argv[1:]
-    target = parse_target(args)
+    explicit = parse_target(args)
+    check_only = "--check" in args
+    print_only = "--print-target" in args
+    # A bare run (double-click / run.bat / run.sh) is a GUI session; flag-based
+    # power-user commands keep to the console.
+    gui = not (explicit or check_only or print_only or "--list-backups" in args)
+
+    target = explicit or find_target()
+
+    # PC search when the standard locations came up empty.
+    if not target and not explicit:
+        target, matches, summary = preflight.search_dashboard()
+        if target:
+            print("[LCARS] Dashboard not in the usual folders - searched this PC"
+                  " and found it at:")
+            print("[LCARS]   " + target)
+            if len(matches) > 1:
+                print("[LCARS] (also found " + str(len(matches) - 1)
+                      + " other candidate(s) - using the first)")
+        else:
+            print("[LCARS] " + summary)
+
     if not target:
-        target = find_target()
-    if not target:
-        sys.stderr.write(
-            "Could not find Hermes' dashboard (web_dist/index.html).\n"
-            "This usually means Hermes Agent is not installed yet.\n\n"
-            "To install Hermes Agent:\n"
-            "  1. Download from: https://hermes-agent.nousresearch.com/docs/user-guide/installation\n"
-            "  2. Install it (run the installer and start the Hermes dashboard)\n"
-            "  3. Then re-run this installer (run.bat / run.sh)\n\n"
-            "If Hermes IS installed but in a custom location, set HERMES_HOME:\n"
-            "  Windows:  set HERMES_HOME=%LOCALAPPDATA%\\hermes\n"
-            "  macOS:    export HERMES_HOME=~/Library/Application Support/hermes\n"
-            "  Linux:    export HERMES_HOME=~/.local/share/hermes\n"
-        )
-        sys.exit(1)
+        if check_only:
+            print("[LCARS] target: NOT FOUND")
+            print("[LCARS] result: NOT READY (Hermes dashboard not installed)")
+            sys.exit(1)
+        if print_only:
+            print("(not found)")
+            sys.exit(1)
+        _not_found(target, explicit, gui)
 
     if not os.path.isfile(target):
-        sys.stderr.write("Target file not found: " + target + "\n")
+        preflight.notify(
+            "Target File Not Found",
+            "The dashboard file you pointed at does not exist:\n  " + target
+            + "\n\nCheck the path - it should end in web_dist/index.html "
+              "inside your Hermes install. Re-run with the correct path, or "
+              "run without --target and let the installer search for it.",
+            gui=gui)
         sys.exit(1)
 
-    if "--print-target" in args:
+    if print_only:
         print(target)
         return
 
     if "--list-backups" in args:
-        names = list_backups()
+        names = list_backups(target)
         print("Saved backups:" if names else "No backups yet.")
         for n in names:
             print("  " + n)
@@ -304,7 +415,7 @@ def main():
     if "--remove" in args:
         # Prefer a full revert to the user's pre-skin state (backup); if none
         # exists, strip the injected markers in place.
-        names = list_backups()
+        names = list_backups(target)
         if names:
             restore(target, names[0])
         else:
@@ -312,8 +423,61 @@ def main():
         print("[LCARS] skin removed; original dashboard restored at " + target)
         return
 
-    if not os.path.isfile(SKIN):
-        sys.stderr.write("apply_lcars_skin.py not found next to apply.py. Keep the bundle together.\n")
+    # ---- default: apply the skin -------------------------------------------
+    if check_only:
+        fatals, warnings = preflight.check_bundle(HERE)
+        print("[LCARS] ---- installer check ----")
+        print("[LCARS] python: " + sys.version.split()[0] + " (3.8+ required: ok)")
+        print("[LCARS] target: " + target)
+        missing = preflight.missing_anchors(target)
+        print("[LCARS] dashboard structure: "
+              + ("ok" if not missing else "MISSING " + ", ".join(missing)))
+        for w in warnings:
+            print("[LCARS] warning: " + w)
+        if fatals:
+            for f in fatals:
+                print("[LCARS] FATAL: " + f)
+            print("[LCARS] result: NOT READY (" + str(len(fatals))
+                  + " fatal problem(s))")
+            sys.exit(1)
+        print("[LCARS] result: READY")
+        return
+
+    fatals, warnings = preflight.check_bundle(HERE)
+    for w in warnings:
+        print("[LCARS] warning: " + w)
+    if fatals:
+        msg = (
+            "This installer bundle is incomplete or damaged.\n\n"
+            "Missing or broken:\n"
+            + "\n".join("  - " + f for f in fatals)
+            + "\n\nWhat to do:\n"
+            "  1. Re-download the latest lcars-installer.zip from:\n"
+            "     " + preflight.RELEASES_URL + "\n"
+            "  2. Extract it into a fresh folder (never mix old and new files)\n"
+            "  3. Run run.bat (Windows) or run.sh (macOS / Linux) again"
+        )
+        preflight.notify("LCARS Installer Bundle Damaged", msg, gui=gui)
+        if gui:
+            preflight.open_url(preflight.RELEASES_URL)
+        sys.exit(1)
+
+    # Verify the target really is a structurally sound Hermes dashboard before
+    # backing anything up or writing anything.
+    missing = preflight.missing_anchors(target)
+    if missing:
+        preflight.notify(
+            "Not a Hermes Dashboard",
+            "The file found at:\n  " + target
+            + "\n\ndoes not look like a Hermes dashboard (missing: "
+            + ", ".join(missing) + ").\n\n"
+            "The installer never modifies files it cannot verify, so nothing "
+            "was changed.\n\nWhat to do:\n"
+            "  - If you used --target, point it at the real web_dist/index.html\n"
+            "  - If Hermes was updated, reinstall/repair it and re-run this installer\n"
+            "  - Restore a backup if the dashboard looks broken:\n"
+            "      python3 apply.py --restore",
+            gui=gui)
         sys.exit(1)
 
     # Back up the user's CURRENT config only the first time (before skin exists).
@@ -330,7 +494,7 @@ def main():
             "then run apply.py again.\n"
         )
         sys.exit(1)
-    if proc.returncode == 0 and sync_autoheal():
+    if proc.returncode == 0 and sync_autoheal(target):
         print("[LCARS] auto-heal watchdog synced to Hermes scripts/ (survives updates)")
     if proc.returncode == 0 and has_skin(target):
         print("[LCARS] verified: skin markers present in dashboard — done.")
@@ -348,10 +512,14 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as exc:  # never show a raw traceback to end users
-        sys.stderr.write(
-            "\n[LCARS] unexpected error: {0}\n"
-            "If this persists, run:  python3 apply.py --target PATH\n"
-            "(PATH = full path to your web_dist/index.html), or open an issue at\n"
-            "https://github.com/ModdySwag/Hermes-Dashboard-Multi-Themes-Edition/issues\n".format(exc)
-        )
+        gui = not any(a.startswith("--") for a in sys.argv[1:])
+        preflight.notify(
+            "[LCARS] unexpected error",
+            "Something went wrong: " + str(exc) + "\n\n"
+            "If this persists:\n"
+            "  - run  python3 apply.py --check  for a readiness report\n"
+            "  - run  python3 apply.py --target FULL/PATH/TO/web_dist/index.html\n"
+            "  - or open an issue at "
+            "https://github.com/ModdySwag/Hermes-Dashboard-Multi-Themes-Edition/issues",
+            gui=gui)
         sys.exit(1)

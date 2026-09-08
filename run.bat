@@ -19,6 +19,7 @@ if not defined PY (
         echo [ERROR] The python\ folder is missing or incomplete.
         echo [ERROR] Re-download lcars-installer.zip from the GitHub Releases page.
         echo.
+        call :popup "Python installer missing" "The python folder is missing or incomplete. Re-download lcars-installer.zip from the GitHub Releases page and extract it again."
         echo Press any key to close this window.
         pause >nul
         exit /b 1
@@ -36,6 +37,7 @@ if not defined PY (
         echo [ERROR] Try running the installer manually:
         echo [ERROR]   Double-click: "%DIR%python\python-3.14.7-amd64.exe"
         echo.
+        call :popup "Python install failed" "The bundled Python installer failed with exit code !INSTALL_RC!. Try running it manually: %DIR%python\python-3.14.7-amd64.exe"
         echo Press any key to close this window.
         pause >nul
         exit /b 1
@@ -61,6 +63,7 @@ if not defined PY (
         echo [ERROR] The installer may have failed. Check Windows Event Viewer
         echo [ERROR] or run the Python installer manually from the python/ folder.
         echo.
+        call :popup "Python install timed out" "Python did not become available after 5 minutes. The installer may have failed - check Windows Event Viewer, or run the Python installer manually from the python folder."
         echo Press any key to close this window.
         pause >nul
         exit /b 1
@@ -97,3 +100,10 @@ echo.
 echo Press any key to close this window.
 pause >nul
 exit /b 1
+
+:popup
+REM %1 = title, %2 = message. Keep both free of single quotes.
+REM Native Windows message box so the user is told what is needed even if the
+REM console window is hidden or minimized.
+powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.Forms.MessageBox]::Show('%~2','%~1','OK','Warning')" >nul 2>&1
+goto :eof
