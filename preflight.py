@@ -194,8 +194,8 @@ def check_bundle(here):
     else:
         fatals.append("The wallpaper folder lcars-bg/ is missing from the installer bundle.")
 
-    if not os.path.isfile(os.path.join(here, "lcars_autoheal.sh")):
-        warnings.append("lcars_autoheal.sh is missing - the update watchdog "
+    if not os.path.isfile(os.path.join(here, "lcars_autoheal.py")):
+        warnings.append("lcars_autoheal.py is missing - the update watchdog "
                         "will not be installed (the skin still applies).")
 
     py_dir = os.path.join(here, "python")

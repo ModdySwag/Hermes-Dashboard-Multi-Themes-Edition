@@ -9,7 +9,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 # come out as 0644 and refuse to run with "./run.sh". This fixes them all.
 if [ ! -x "$0" ]; then
     echo "Fixing file permissions (ZIP archives often strip executable bits)..."
-    chmod +x "$DIR/run.sh" "$DIR/lcars_autoheal.sh" "$DIR/apply.py" "$DIR/apply_lcars_skin.py" 2>/dev/null || true
+    chmod +x "$DIR/run.sh" "$DIR/lcars_autoheal.py" "$DIR/apply.py" "$DIR/apply_lcars_skin.py" 2>/dev/null || true
 fi
 # Determine if we're running under MSYS/Git-Bash on Windows
 # If so, we'll convert to Windows paths for the native Python call.

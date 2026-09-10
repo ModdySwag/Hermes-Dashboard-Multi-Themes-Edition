@@ -14,7 +14,7 @@ WHAT YOU SHOULD SEE IN THIS FOLDER
     apply_lcars_skin.py   - the skin engine (used by apply.py)
     run.bat              - Windows launcher  (double-click this)
     run.sh               - macOS / Linux launcher (double-click it)
-    lcars_autoheal.sh    - auto-heal watchdog (re-skins after a Hermes update)
+    lcars_autoheal.py    - auto-heal watchdog (re-skins after a Hermes update)
     lcars-bg.jpg         - the main wallpaper picture
     lcars-bg/            - the 12 theme wallpaper pictures
     python/              - Python installers (used only if Python is missing)
@@ -193,13 +193,13 @@ Two layers protect it:
      idempotent and will not double-apply.
 
   2. SCHEDULED WATCHDOG (recommended) - a small script
-     (lcars_autoheal.sh) is registered with Hermes as a recurring job that
+     (lcars_autoheal.py) is registered with Hermes as a recurring job that
      checks every 30 minutes. If it finds the skin missing (e.g. right after
      a Hermes update reverted it), it re-applies it and tells you once. When
      the skin is already present it stays completely silent.
 
   Every time you run run.bat / run.sh / apply.py, the latest version of
-  lcars_autoheal.sh is auto-copied into Hermes' scripts folder(s) — for the
+  lcars_autoheal.py is auto-copied into Hermes' scripts folder(s) — for the
   main install AND every profile — so the watchdog always runs the current
   code, no matter which profile you registered the job from. A small
   location file (lcars_install_dir.txt) is written alongside it so the
@@ -209,6 +209,14 @@ Two layers protect it:
   Hermes cron jobs are preserved across `hermes update`, so the watchdog keeps
   working on Windows / macOS / Linux after every update.
 
+  NOTE for upgrades from an older bundle: the watchdog used to be a shell
+  script (lcars_autoheal.sh). Hermes runs a cron job's .sh through WSL on
+  Windows, so on a machine without a WSL distribution that job failed on every
+  tick ("Windows Subsystem for Linux has no installed distributions") while
+  looking like a bug in the script itself. The Python version has no such
+  dependency, and this installer now retires the old .sh and re-points any
+  existing job at lcars_autoheal.py automatically.
+
 To set up the watchdog (one time):
 
   # Register the auto-heal cron job. The script is auto-synced to Hermes'
@@ -217,7 +225,7 @@ To set up the watchdog (one time):
 
   hermes cron create "*/30 * * * *" \
     --name "LCARS dashboard auto-heal" \
-    --script "lcars_autoheal.sh" \
+    --script "lcars_autoheal.py" \
     --no-agent --deliver local
 
 To check it is running:  hermes cron list

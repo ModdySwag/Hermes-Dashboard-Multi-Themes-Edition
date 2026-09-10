@@ -56,6 +56,7 @@ if sys.version_info < (3, 8):
     sys.exit(1)
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -64,7 +65,12 @@ import preflight
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKIN = os.path.join(HERE, "apply_lcars_skin.py")
-AUTOHEAL = os.path.join(HERE, "lcars_autoheal.sh")
+AUTOHEAL_NAME = "lcars_autoheal.py"          # portable watchdog; see its header
+LEGACY_AUTOHEAL_NAME = "lcars_autoheal.sh"   # retired: Hermes runs a cron job's .sh
+                                             # through wsl.exe on Windows, which dies
+                                             # outright when WSL has no distribution
+SIDECAR_NAME = "lcars_install_dir.txt"
+AUTOHEAL = os.path.join(HERE, AUTOHEAL_NAME)
 BACKUPS = os.path.join(HERE, "backups")
 
 MARKERS = [
@@ -287,11 +293,69 @@ def parse_target(args):
     return None
 
 
+def _hermes_cli():
+    """Locate the hermes CLI, or None. A GUI double-click has a thin PATH."""
+    found = shutil.which("hermes")
+    if found:
+        return [found]
+    home = os.path.expanduser("~")
+    localapp = os.environ.get("LOCALAPPDATA", "")
+    for cand in (
+        os.path.join(localapp, "hermes", "hermes-agent", "venv", "Scripts", "hermes.exe") if localapp else "",
+        os.path.join(home, ".local", "bin", "hermes"),
+        "/usr/local/bin/hermes",
+    ):
+        if cand and os.path.isfile(cand):
+            return [cand]
+    return None
+
+
+def migrate_autoheal_jobs():
+    """Re-point cron jobs still registered against lcars_autoheal.sh at the .py.
+
+    Installs made with an older bundle registered the shell watchdog. On Windows
+    such a job fails on every tick with "Windows Subsystem for Linux has no
+    installed distributions" while looking like a script bug, so repairing it
+    beats leaving a silently dead job behind. Best effort: needs the hermes CLI
+    and is never fatal.
+
+    Returns the number of jobs re-pointed.
+    """
+    cli = _hermes_cli()
+    if not cli:
+        return 0
+    try:
+        listing = subprocess.run(cli + ["cron", "list", "--all"],
+                                 capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+    fixed = 0
+    job = None
+    for line in (listing or "").splitlines():
+        m = re.match(r"^\s{2}([0-9a-f]{12})\b", line)
+        if m:
+            job = m.group(1)
+            continue
+        if job and re.search(r"\bScript:\s*\S*" + re.escape(LEGACY_AUTOHEAL_NAME), line):
+            try:
+                subprocess.run(cli + ["cron", "edit", job, "--script", AUTOHEAL_NAME],
+                               capture_output=True, text=True, timeout=60)
+                print("[LCARS] auto-heal cron job " + job + " re-pointed at "
+                      + AUTOHEAL_NAME)
+                fixed += 1
+            except (OSError, subprocess.SubprocessError):
+                pass
+            job = None
+    return fixed
+
+
 def sync_autoheal(target=None):
-    """Copy lcars_autoheal.sh (+ a bundle-location sidecar) into every
+    """Copy the auto-heal watchdog (+ a bundle-location sidecar) into every
     Hermes scripts/ folder — the default home AND every profile — so the
     cron watchdog always runs the latest version from this bundle no matter
     which profile registered the job or where this bundle was extracted.
+    Also retires a stale lcars_autoheal.sh and re-points any job still using it.
     Safe to call every time."""
     if not os.path.isfile(AUTOHEAL):
         return False
@@ -309,20 +373,28 @@ def sync_autoheal(target=None):
     for sd in scripts_dirs:
         try:
             os.makedirs(sd, exist_ok=True)
-            dest = os.path.join(sd, "lcars_autoheal.sh")
+            dest = os.path.join(sd, AUTOHEAL_NAME)
             shutil.copyfile(AUTOHEAL, dest)
             os.chmod(dest, 0o755)
-            with open(os.path.join(sd, "lcars_install_dir.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(sd, SIDECAR_NAME), "w", encoding="utf-8") as f:
                 f.write(HERE + "\n")
+            legacy = os.path.join(sd, LEGACY_AUTOHEAL_NAME)
+            if os.path.isfile(legacy):
+                try:
+                    os.remove(legacy)
+                except OSError:
+                    pass
             ok = True
         except OSError:
             continue
     try:
-        with open(os.path.join(hermes_home, "lcars_install_dir.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(hermes_home, SIDECAR_NAME), "w", encoding="utf-8") as f:
             f.write(HERE + "\n")
         ok = True
     except OSError:
         pass
+    if ok:
+        migrate_autoheal_jobs()
     return ok
 
 

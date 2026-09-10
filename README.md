@@ -20,7 +20,7 @@ Built by Moddy — http://www.moddys.net · Licensed MIT.
   unusual, it **searches this PC** and uses it automatically. Only if Hermes
   truly isn't installed does it stop - and a **pop-up** tells you exactly what's
   missing and where to get it (and opens the right page for you).
-- **Survives Hermes updates:** a bundled auto-heal watchdog (`lcars_autoheal.sh`) re-skins the dashboard after any `hermes update` — on launch and via an optional scheduled cron job. It syncs itself into every Hermes profile's scripts folder and remembers where the bundle lives, so it works no matter where you extracted the zip. See `read me.txt` for setup.
+- **Survives Hermes updates:** a bundled auto-heal watchdog (`lcars_autoheal.py`) re-skins the dashboard after any `hermes update` — on launch and via an optional scheduled cron job. It syncs itself into every Hermes profile's scripts folder and remembers where the bundle lives, so it works no matter where you extracted the zip. See `read me.txt` for setup.
 - Revert any time: `python3 apply.py --restore` · Remove: `python3 apply.py --remove`.
 
 ## Quick start
