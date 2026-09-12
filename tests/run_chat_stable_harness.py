@@ -193,9 +193,10 @@ def chrome_cmd(exe, profile, scale, url):
            "--force-device-scale-factor=%s" % scale,
            url]
     # Chrome's own sandbox is the usual reason it refuses to start inside a
-    # hosted runner's nested sandbox (it works fine on a desktop). Relax it only
-    # where CI is set, never on a normal machine.
-    if os.environ.get("CI"):
+    # hosted runner's nested sandbox. Linux needs it, macOS is the opposite:
+    # there --no-sandbox breaks the Mach rendezvous its child processes use
+    # (bootstrap_look_up ... Unknown service name), so it never loads a page.
+    if os.environ.get("CI") and sys.platform.startswith("linux"):
         cmd.insert(1, "--no-sandbox")
     return cmd
 
@@ -259,6 +260,9 @@ def run_pass(browser, exe, page_path, scale):
                         parsed = latest
                         if len(parsed) >= EXPECTED_SCENARIOS:
                             return parsed, "", log_path
+                # A browser that died should not cost the full timeout.
+                if proc.poll() is not None and not parsed:
+                    return ([], "browser exited early (code %s)" % proc.returncode, log_path)
                 # The page heartbeats once a second, so silence means it is
                 # wedged or the browser died, not that it is busy.
                 if at and time.time() - at > STALL_S:
