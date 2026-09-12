@@ -32,6 +32,8 @@ import build_chat_stable_harness as harness  # noqa: E402
 
 EXPECTED_SCENARIOS = 12
 RESULT_TIMEOUT_S = 150
+# The page heartbeats once a second, so this much silence means it is wedged.
+STALL_S = 12
 
 CHROME_CANDIDATES = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -179,11 +181,23 @@ def serve(results, page_path):
 
 
 def chrome_cmd(exe, profile, scale, url):
-    return [exe, "--headless=new", "--disable-gpu", "--no-first-run",
-            "--no-default-browser-check", "--disable-extensions",
-            "--user-data-dir=" + profile,
-            "--force-device-scale-factor=%s" % scale,
-            url]
+    cmd = [exe,
+           # Plain --headless: "--headless=new" was the transitional spelling and
+           # is not accepted by every current build.
+           "--headless", "--disable-gpu", "--no-first-run",
+           "--no-default-browser-check", "--disable-extensions",
+           # Containers (GitHub's Linux runners) have a tiny /dev/shm, which
+           # Chrome dies on without this.
+           "--disable-dev-shm-usage",
+           "--user-data-dir=" + profile,
+           "--force-device-scale-factor=%s" % scale,
+           url]
+    # Chrome's own sandbox is the usual reason it refuses to start inside a
+    # hosted runner's nested sandbox (it works fine on a desktop). Relax it only
+    # where CI is set, never on a normal machine.
+    if os.environ.get("CI"):
+        cmd.insert(1, "--no-sandbox")
+    return cmd
 
 
 def webkit_cmd(python, scale, url, hold=40):
@@ -199,8 +213,20 @@ def firefox_cmd(exe, profile, scale, url):
     return [exe, "-headless", "-no-remote", "-profile", profile, url]
 
 
+def tail(path, lines=20):
+    """Last lines of a file, or a note explaining why there are none."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            rows = fh.read().rstrip().splitlines()
+    except OSError as exc:
+        return "  (no browser output: %s)" % exc
+    if not rows:
+        return "  (browser produced no output)"
+    return "\n".join("  " + row for row in rows[-lines:])
+
+
 def run_pass(browser, exe, page_path, scale):
-    """One browser, one device scale. Returns (results, note)."""
+    """One browser, one device scale. Returns (results, note, browser_log)."""
     results = _Results()
     httpd, port = serve(results, page_path)
     profile = tempfile.mkdtemp(prefix="chat-stable-%s-" % browser)
@@ -211,35 +237,38 @@ def run_pass(browser, exe, page_path, scale):
         cmd = webkit_cmd(exe, scale, url)
     else:
         cmd = firefox_cmd(exe, profile, scale, url)
+    # The browser's own output is the only evidence when a launch fails, so keep
+    # it instead of sending it to DEVNULL (that blind spot made the first CI
+    # run's failures guesswork).
+    log_path = os.path.join(tempfile.gettempdir(),
+                            "chat-stable-%s-%s.log" % (browser, scale))
     proc = None
+    parsed = None
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        deadline = time.time() + RESULT_TIMEOUT_S
-        last = None
-        stable_since = None
-        while time.time() < deadline:
-            raw, at = results.snapshot()
-            if raw and raw != last:
-                last, stable_since = raw, time.time()
-                try:
-                    parsed = json.loads(raw)
-                except ValueError:
-                    parsed = None
-                if parsed and len(parsed) >= EXPECTED_SCENARIOS:
-                    return parsed, ""
-            elif raw and stable_since and time.time() - stable_since > 5:
-                # Page stopped reporting: hand back what arrived, the caller
-                # reports the shortfall.
-                try:
-                    return json.loads(raw), "page stopped after %s scenarios" % len(json.loads(raw))
-                except ValueError:
-                    return [], "unreadable results body"
-            time.sleep(0.25)
-        raw, _ = results.snapshot()
-        try:
-            return json.loads(raw), "timed out" if raw else "no results within %ss" % RESULT_TIMEOUT_S
-        except (ValueError, TypeError):
-            return [], "timed out with no readable results"
+        with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+            proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+            deadline = time.time() + RESULT_TIMEOUT_S
+            while time.time() < deadline:
+                raw, at = results.snapshot()
+                if raw:
+                    try:
+                        latest = json.loads(raw)
+                    except ValueError:
+                        latest = None
+                    if latest and len(latest) > len(parsed or []):
+                        parsed = latest
+                        if len(parsed) >= EXPECTED_SCENARIOS:
+                            return parsed, "", log_path
+                # The page heartbeats once a second, so silence means it is
+                # wedged or the browser died, not that it is busy.
+                if at and time.time() - at > STALL_S:
+                    return (parsed or [],
+                            "page went quiet after %d scenarios" % len(parsed or []),
+                            log_path)
+                time.sleep(0.25)
+        return (parsed or [],
+                "timed out after %ss (last count %d)" % (RESULT_TIMEOUT_S, len(parsed or [])),
+                log_path)
     finally:
         if proc and proc.poll() is None:
             proc.terminate()
@@ -322,12 +351,16 @@ def main():
         print("\n=== %s ===\n%s" % (browser, exe))
         for scale in (1, 4):
             label = "dpr%s" % scale
-            results, note = run_pass(browser, exe, page, scale)
+            results, note, log_path = run_pass(browser, exe, page, scale)
             print("\n--- %s %s ---" % (browser, label))
-            if not results:
-                print("FAIL: no results (%s)" % (note or "unknown"))
-                failures += 1
-                continue
+            short = not results or len(results) < EXPECTED_SCENARIOS
+            if short:
+                print("FAIL: %s" % (note or "cut short"))
+                print("browser output (%s):" % log_path)
+                print(tail(log_path))
+                if not results:
+                    failures += 1
+                    continue
             for rec in results:
                 ok = rec.get("ok") is True
                 failures += 0 if ok else 1
@@ -335,9 +368,9 @@ def main():
                 extra = ", ".join("%s=%s" % (k, v) for k, v in rec.items()
                                   if k not in ("name", "ok"))
                 print("%-4s %-34s %s" % ("PASS" if ok else "FAIL", rec.get("name"), extra))
-            if len(results) < EXPECTED_SCENARIOS:
-                print("FAIL: only %d of %d scenarios reported (%s)"
-                      % (len(results), EXPECTED_SCENARIOS, note or "cut short"))
+            if short:
+                print("FAIL: only %d of %d scenarios reported"
+                      % (len(results), EXPECTED_SCENARIOS))
                 failures += 1
     print("\nscenarios run: %d, failures: %d" % (ran, failures))
     return 1 if failures else 0

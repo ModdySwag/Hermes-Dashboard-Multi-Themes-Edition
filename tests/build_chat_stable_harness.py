@@ -38,9 +38,11 @@ function report() {
   var body = JSON.stringify(window.__results);
   document.getElementById("results").textContent = body;
   // Same-origin POST so any browser can hand the results over: Firefox has no
-  // --dump-dom, and this needs no flags at all.
+  // --dump-dom, and this needs no flags at all. The runner treats a gap in
+  // these as the page being wedged, so keep them coming even between scenarios.
   try { fetch("/results", { method: "POST", body: body }); } catch (e) {}
 }
+setInterval(report, 1000);
 async function run(name, fn) {
   var rec = { name: name };
   try { await fn(rec); } catch (e) { rec.error = String(e); }
