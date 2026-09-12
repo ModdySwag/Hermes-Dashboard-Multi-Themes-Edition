@@ -56,8 +56,20 @@ def copy_assets(target):
     return len(os.listdir(dest))
 
 
-def strip_block(s, start, end):
-    """Remove every span between start/end markers (idempotent re-apply)."""
+def strip_block(s, start, end, separator_before=False):
+    """Remove every span between start/end markers (idempotent re-apply).
+
+    It also removes the whitespace separator the injector placed beside the
+    block, which is what makes re-applying byte-stable. `main()` writes
+    ``"\\n" + block`` after ``</title>`` and ``block + "\\n  "`` before
+    ``</head>`` / ``</body>``; stripping only the markers left that separator
+    behind and every further apply added another one, so the dashboard grew
+    ~3 blank lines per manual re-run. `separator_before` names the side the
+    injector's separator sits on (True for the ``</title>`` site, False for the
+    two end-tag sites). On a pristine file there are no markers, so this is a
+    no-op: the first apply is unchanged and --restore still returns the
+    original bytes.
+    """
     while True:
         i = s.find(start)
         if i == -1:
@@ -65,7 +77,17 @@ def strip_block(s, start, end):
         j = s.find(end, i)
         if j == -1:
             return s
-        s = s[:i] + s[j + len(end):]
+        j += len(end)
+        if separator_before:
+            a = i
+            while a > 0 and s[a - 1] in " \t\r\n":
+                a -= 1
+            s = s[:a] + s[j:]
+        else:
+            k = j
+            while k < len(s) and s[k] in " \t\r\n":
+                k += 1
+            s = s[:i] + s[k:]
 
 
 def _repair_match(ref_name, disk_by_ext):
@@ -557,8 +579,10 @@ def main():
 
     html, asset_fixes = fix_stale_asset_references(html, web_dist)
 
-    for s, e in ((M_HEAD_S, M_HEAD_E), (M_STYLE_S, M_STYLE_E), (M_BODY_S, M_BODY_E)):
-        html = strip_block(html, s, e)
+    for s, e, sep_before in ((M_HEAD_S, M_HEAD_E, True),
+                             (M_STYLE_S, M_STYLE_E, False),
+                             (M_BODY_S, M_BODY_E, False)):
+        html = strip_block(html, s, e, separator_before=sep_before)
 
     for anchor in ("<title>", "</head>", '<div id="root">', "</body>"):
         if anchor not in html:

@@ -34,9 +34,36 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "lcars_autoheal_state.json")
+LOG = os.path.join(HERE, "lcars_autoheal.log")
 SIDECAR = "lcars_install_dir.txt"
+DISABLED = os.path.join(HERE, "lcars_autoheal.disabled")
 NOTICE_EVERY = 24 * 3600          # a missing bundle is reported at most daily
 REAPPLY_TIMEOUT = 300
+LOG_MAX = 200_000                 # bytes before the log is trimmed
+
+
+def _log(line):
+    """Append one timestamped line to the watchdog log. Never raises.
+
+    A console-less launch (Windows Task Scheduler, systemd, launchd) discards
+    stdout, so the log is the only durable record that a heal happened - and
+    with `has_skin()` returning silently on a healthy install, the absence of
+    log lines is itself the evidence that nothing needed doing.
+    """
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        if os.path.getsize(LOG) > LOG_MAX:
+            with open(LOG, encoding="utf-8", errors="replace") as f:
+                tail = f.readlines()[-500:]
+            with open(LOG, "w", encoding="utf-8") as f:
+                f.writelines(tail)
+    except OSError:
+        pass
+    try:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(f"{stamp}  {line}\n")
+    except OSError:
+        pass
 
 
 def _valid(d):
@@ -114,6 +141,7 @@ def notice(msg):
             st = {}
     if time.time() - float(st.get("notice_at", 0)) < NOTICE_EVERY:
         return
+    _log(msg)
     print(msg)
     st["notice_at"] = time.time()
     try:
@@ -139,6 +167,13 @@ def load_bundle(d):
 
 
 def run():
+    # The user reverted the skin on purpose (apply.py --remove / --restore wrote
+    # this marker): stand down, or the watchdog would put the theme back within
+    # a minute and the revert would look broken. Running the installer again
+    # clears the marker.
+    if os.path.isfile(DISABLED):
+        return
+
     d = resolve_dir()
     if not d:
         notice("[LCARS auto-heal] could not locate the lcars-installer bundle. "
@@ -186,12 +221,17 @@ def run():
         healed = False
 
     if healed:
-        print("[LCARS auto-heal] dashboard skin was missing (Hermes update or revert) "
-              f"- re-applied to {target}")
+        msg = ("[LCARS auto-heal] dashboard skin was missing (Hermes update or revert) "
+               f"- re-applied to {target}")
+        _log(msg)
+        print(msg)
     else:
-        print("[LCARS auto-heal] WARNING: the skin is missing and re-applying did not "
-              "restore it.")
+        msg = ("[LCARS auto-heal] WARNING: the skin is missing and re-applying did not "
+               "restore it.")
+        _log(msg)
+        print(msg)
         for line in [l for l in output.strip().splitlines() if l.strip()][-3:]:
+            _log("  " + line)
             print("  " + line)
 
 

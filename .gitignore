@@ -7,6 +7,13 @@ __pycache__/
 # Backups created at apply time (live user data — never commit)
 backups/
 
+# Watchdog runtime artefacts (log + notice dedupe + stand-down marker): they
+# appear next to the script wherever it runs, including this folder, and must
+# never be committed or shipped.
+lcars_autoheal.log
+lcars_autoheal_state.json
+lcars_autoheal.disabled
+
 # Editor / OS files
 .DS_Store
 Thumbs.db

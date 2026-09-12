@@ -192,11 +192,36 @@ Two layers protect it:
      normal launch) and it re-skins the dashboard. Safe to run any time; it is
      idempotent and will not double-apply.
 
-  2. SCHEDULED WATCHDOG (recommended) - a small script
-     (lcars_autoheal.py) is registered with Hermes as a recurring job that
-     checks every 30 minutes. If it finds the skin missing (e.g. right after
-     a Hermes update reverted it), it re-applies it and tells you once. When
-     the skin is already present it stays completely silent.
+  2. SCHEDULED WATCHDOG - a small script (lcars_autoheal.py) checks the
+     dashboard and puts the skin back whenever it is missing. When the skin is
+     already present it stays completely silent.
+
+     On Windows the installer registers this for you as a scheduled task named
+     LCARS_Dashboard_AutoHeal that runs once a minute - no setup, nothing to
+     remember. Why a Windows task and not just a Hermes cron job? Hermes' cron
+     ticker only runs inside a live gateway or desktop backend, and a Hermes
+     update stops those processes - which is exactly when the dashboard file
+     gets overwritten. A Scheduled Task runs outside Hermes entirely, using a
+     normal Python install (never the Hermes venv, since that is what an update
+     replaces), so the theme returns within about a minute even if you had to
+     close everything - gateway, dashboard, every hermes.exe - before updating.
+
+     On macOS and Linux, register the Hermes cron job yourself (one time):
+
+       hermes cron create "*/30 * * * *" \
+         --name "LCARS dashboard auto-heal" \
+         --script "lcars_autoheal.py" \
+         --no-agent --deliver local
+
+     The cron job needs a running gateway to tick, so on those platforms the
+     skin comes back once the gateway is up again (or immediately if you re-run
+     run.sh). If you want the always-on behaviour Windows gets, point your own
+     scheduler at lcars_autoheal.py - it is plain Python and uses nothing from
+     Hermes:
+
+       crontab -e
+       */1 * * * * /usr/bin/python3 "$HOME/.local/share/hermes/scripts/lcars_autoheal.py"
+       (macOS: the same line in launchd, or a systemd user timer on Linux)
 
   Every time you run run.bat / run.sh / apply.py, the latest version of
   lcars_autoheal.py is auto-copied into Hermes' scripts folder(s) — for the
@@ -204,7 +229,8 @@ Two layers protect it:
   code, no matter which profile you registered the job from. A small
   location file (lcars_install_dir.txt) is written alongside it so the
   watchdog can find this installer bundle wherever you extracted it
-  (Desktop, Downloads, anywhere) — no manual copy or path editing needed.
+  (Desktop, Downloads, anywhere) — no manual copy or path editing needed. The
+  Windows task is re-registered if it is missing or points somewhere else.
 
   Hermes cron jobs are preserved across `hermes update`, so the watchdog keeps
   working on Windows / macOS / Linux after every update.
@@ -217,22 +243,48 @@ Two layers protect it:
   dependency, and this installer now retires the old .sh and re-points any
   existing job at lcars_autoheal.py automatically.
 
-To set up the watchdog (one time):
+Checking it
+  python3 apply.py --check        # one line: how the skin recovers after an update
+  hermes cron list                # the macOS / Linux cron job, if you registered one
+  schtasks /Query /TN LCARS_Dashboard_AutoHeal     # the Windows scheduled task
 
-  # Register the auto-heal cron job. The script is auto-synced to Hermes'
-  # scripts/ folder by apply.py / run.sh / run.bat, so you don't need to
-  # copy it manually - just register the cron job:
+Turning it off
+  python3 apply.py --remove       (or --restore) pauses auto-heal for you: the
+  Windows task is deleted and a stand-down marker stops the watchdog, so the
+  theme stays off until you run the installer again.
+  By hand:  schtasks /Delete /TN LCARS_Dashboard_AutoHeal /F     (Windows)
+            hermes cron remove <job-id>                          (macOS / Linux)
 
-  hermes cron create "*/30 * * * *" \
-    --name "LCARS dashboard auto-heal" \
-    --script "lcars_autoheal.py" \
-    --no-agent --deliver local
+When it has to act, the watchdog writes a line to lcars_autoheal.log next to the
+script in Hermes' scripts folder. Silence there means it never needed to do
+anything; a warning line is the first thing to send if a theme comes back wrong.
 
-To check it is running:  hermes cron list
-To remove it:            hermes cron remove <job-id>
-
-(If you prefer not to use the scheduled job, layer 1 - re-running the launcher
+(If you prefer not to use any scheduled job, layer 1 - re-running the launcher
 after an update - is enough to restore the theme.)
+
+------------------------------------------------------------
+UPDATING HERMES (and the "another hermes.exe is running" error)
+------------------------------------------------------------
+
+The skin is not part of Hermes, so it never blocks an update - and you never
+have to reinstall it afterwards. If `hermes update` refuses to run:
+
+  ✗ Another hermes.exe is running:  PID 12345 hermes.exe
+
+Windows is holding the venv's launcher open (Hermes Desktop, a gateway, or
+another hermes terminal). Close what is listed, or:
+
+  hermes gateway stop          # stop the gateway service
+  hermes dashboard --stop      # stop dashboards started by hand
+  taskkill /PID 12345 /F       # the PID the update printed
+
+The update also has escape hatches - `--force` skips the .exe check and
+`--force-venv` skips the venv-holder check - but skipping the venv guard can
+leave an install stranded between two versions, so stopping the listed
+processes is the safe route.
+
+Once the update finishes, the theme restores itself: within a minute on Windows
+(the scheduled task), or as soon as you re-run run.bat / run.sh.
 
 ------------------------------------------------------------
 SYSTEM & BROWSER COMPATIBILITY

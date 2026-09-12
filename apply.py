@@ -55,10 +55,12 @@ if sys.version_info < (3, 8):
     ).format(sys.version_info[0], sys.version_info[1])
     sys.exit(1)
 
+import glob
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 
 import preflight
@@ -350,6 +352,16 @@ def migrate_autoheal_jobs():
     return fixed
 
 
+def _scripts_dirs(hermes_home):
+    """Every Hermes scripts/ folder the watchdog is synced into."""
+    dirs = [os.path.join(hermes_home, "scripts")]
+    profiles = os.path.join(hermes_home, "profiles")
+    if os.path.isdir(profiles):
+        for name in sorted(os.listdir(profiles)):
+            dirs.append(os.path.join(profiles, name, "scripts"))
+    return dirs
+
+
 def sync_autoheal(target=None):
     """Copy the auto-heal watchdog (+ a bundle-location sidecar) into every
     Hermes scripts/ folder — the default home AND every profile — so the
@@ -364,11 +376,7 @@ def sync_autoheal(target=None):
         hermes_home = hermes_root_from_target(target)
     if not hermes_home:
         return False
-    scripts_dirs = [os.path.join(hermes_home, "scripts")]
-    profiles = os.path.join(hermes_home, "profiles")
-    if os.path.isdir(profiles):
-        for name in sorted(os.listdir(profiles)):
-            scripts_dirs.append(os.path.join(profiles, name, "scripts"))
+    scripts_dirs = _scripts_dirs(hermes_home)
     ok = False
     for sd in scripts_dirs:
         try:
@@ -394,8 +402,292 @@ def sync_autoheal(target=None):
     except OSError:
         pass
     if ok:
+        # Installing the watchdog re-arms it: clear a stand-down left by a
+        # previous --remove / --restore.
+        _write_disabled_markers(hermes_home, False)
         migrate_autoheal_jobs()
     return ok
+
+
+AUTOSTART_TASK = "LCARS_Dashboard_AutoHeal"   # Windows Scheduled Task name
+AUTOSTART_MINUTES = 1                        # how often it re-checks for the skin
+AUTOSTART_DISABLED_NAME = "lcars_autoheal.disabled"   # stand-down marker
+
+
+def _pick_pythonw():
+    """A ``pythonw.exe`` to run the watchdog on, or None.
+
+    Deliberately NOT the Hermes venv interpreter: `hermes update` replaces and
+    locks exactly that venv, so a healer pointing at it would break the moment
+    it is needed. Preference: PATH, the standard per-user Python installs,
+    then this interpreter's own ``pythonw`` (only when it is not the venv).
+    """
+    cands = [shutil.which("pythonw") or ""]
+    localapp = os.environ.get("LOCALAPPDATA") or ""
+    for base in (os.path.join(localapp, "Programs", "Python") if localapp else "",
+                 os.path.join(os.environ.get("ProgramFiles") or "", "Python")):
+        if base and os.path.isdir(base):
+            for name in sorted(os.listdir(base), reverse=True):
+                cands.append(os.path.join(base, name, "pythonw.exe"))
+    if sys.executable.lower().endswith("python.exe"):
+        cands.append(os.path.join(os.path.dirname(sys.executable), "pythonw.exe"))
+    for cand in cands:
+        if not cand or not os.path.isfile(cand):
+            continue
+        lowered = cand.replace("/", "\\").lower()
+        if "hermes-agent" in lowered or "\\venv\\" in lowered:
+            continue                      # the venv an update swaps out
+        return cand
+    return None
+
+
+def _is_temp_path(p):
+    """True when a path lives under a temp folder.
+
+    Journey/CI runs of this installer execute from a scratch copy under Temp,
+    and sync_autoheal() writes copies + a sidecar there. Such a copy must never
+    capture the machine-wide scheduled task - it would be deleted with the
+    scratch dir and silently stop healing the real dashboard.
+    """
+    if not p:
+        return False
+    return any(part.lower() in ("temp", "tmp") for part in os.path.normpath(p).split(os.sep))
+
+
+def _healer_script(hermes_home):
+    """The synced watchdog copy the scheduled task should run.
+
+    The default home's ``scripts/`` copy is the most stable address (it is not
+    tied to a profile name), so prefer it and fall back to any profile's copy.
+    """
+    default = os.path.join(hermes_home, "scripts", AUTOHEAL_NAME)
+    if os.path.isfile(default) and not _is_temp_path(default):
+        return default
+    profiles = os.path.join(hermes_home, "profiles")
+    if os.path.isdir(profiles):
+        for name in sorted(os.listdir(profiles)):
+            cand = os.path.join(profiles, name, "scripts", AUTOHEAL_NAME)
+            if os.path.isfile(cand) and not _is_temp_path(cand):
+                return cand
+    return None
+
+
+def _task_command(task_name):
+    """(Command, Arguments) of an existing task, or None when it does not exist."""
+    try:
+        proc = subprocess.run(["schtasks", "/Query", "/TN", task_name, "/XML"],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    cmd = re.search(r"<Command>(.*?)</Command>", proc.stdout or "")
+    arg = re.search(r"<Arguments>(.*?)</Arguments>", proc.stdout or "")
+    return ((cmd.group(1).strip() if cmd else ""),
+            (arg.group(1).strip() if arg else ""))
+
+
+def _register_task(task_name, pythonw, script):
+    """Create/refresh the scheduled task. Returns True on success."""
+    user = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
+    xml = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        '  <RegistrationInfo>\n'
+        '    <Description>Re-applies the LCARS dashboard skin whenever a Hermes update '
+        '(or anything else) rebuilds hermes_cli/web_dist/index.html. Runs OUTSIDE the '
+        'Hermes process tree on a non-venv Python, so it heals even when every Hermes '
+        'process has been stopped for the update.</Description>\n'
+        '    <URI>\\' + task_name + '</URI>\n'
+        '  </RegistrationInfo>\n'
+        '  <Principals>\n'
+        '    <Principal id="Author">\n'
+        '      <UserId>' + user + '</UserId>\n'
+        '      <LogonType>InteractiveToken</LogonType>\n'
+        '    </Principal>\n'
+        '  </Principals>\n'
+        '  <Settings>\n'
+        '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
+        '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
+        '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n'
+        '    <StartWhenAvailable>true</StartWhenAvailable>\n'
+        '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
+        '    <Enabled>true</Enabled>\n'
+        '    <WakeToRun>false</WakeToRun>\n'
+        '    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>\n'
+        '    <Priority>7</Priority>\n'
+        '    <IdleSettings>\n'
+        '      <StopOnIdleEnd>false</StopOnIdleEnd>\n'
+        '      <RestartOnIdle>false</RestartOnIdle>\n'
+        '    </IdleSettings>\n'
+        '  </Settings>\n'
+        '  <Triggers>\n'
+        '    <LogonTrigger>\n'
+        '      <Enabled>true</Enabled>\n'
+        '      <UserId>' + user + '</UserId>\n'
+        '    </LogonTrigger>\n'
+        '    <TimeTrigger>\n'
+        '      <StartBoundary>' + time.strftime("%Y-%m-%dT%H:%M:%S") + '</StartBoundary>\n'
+        '      <Enabled>true</Enabled>\n'
+        '      <Repetition>\n'
+        '        <Interval>PT' + str(AUTOSTART_MINUTES) + 'M</Interval>\n'
+        '      </Repetition>\n'
+        '    </TimeTrigger>\n'
+        '  </Triggers>\n'
+        '  <Actions Context="Author">\n'
+        '    <Exec>\n'
+        '      <Command>"' + pythonw + '"</Command>\n'
+        '      <Arguments>"' + script + '"</Arguments>\n'
+        '    </Exec>\n'
+        '  </Actions>\n'
+        '</Task>\n'
+    )
+    path = os.path.join(tempfile.gettempdir(), task_name + ".xml")
+    try:
+        with open(path, "w", encoding="utf-16") as f:
+            f.write(xml)
+        proc = subprocess.run(["schtasks", "/Create", "/TN", task_name, "/XML", path, "/F"],
+                              capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def ensure_autostart_healer(target=None):
+    """Make the auto-heal watchdog run even when NO Hermes process is alive.
+
+    WHY this exists next to the cron job: Hermes' cron ticker only runs inside a
+    live gateway or desktop backend (hermes_cli/cron.py - there is no standalone
+    cron daemon), and `hermes update` both wipes web_dist and stops those
+    processes. So the cron watchdog cannot fire until a gateway is back, and
+    then only on its next tick - up to 30 minutes of a reverted dashboard. A
+    Windows Scheduled Task runs outside the Hermes process tree entirely, on a
+    non-venv Python, so the skin returns within AUTOSTART_MINUTES regardless of
+    what the update chain did to Hermes' processes.
+
+    Best-effort and idempotent: only touches schtasks when the task is missing
+    or points somewhere else. Never fatal. Set LCARS_NO_AUTOSTART=1 to skip it
+    (used by the journey/CI tests so they leave no tasks on the host).
+
+    Returns True when a healer outside Hermes is in place.
+    """
+    if sys.platform != "win32":
+        return False                      # cron path only; other OSes unchanged
+    if os.environ.get("LCARS_NO_AUTOSTART"):
+        return False
+    hermes_home = find_hermes_home() or (hermes_root_from_target(target) if target else None)
+    if not hermes_home:
+        return False
+    script = _healer_script(hermes_home)
+    pythonw = _pick_pythonw()
+    if not script or not pythonw:
+        print("[LCARS] note: no non-Hermes Python found - the scheduled-task "
+              "auto-heal was skipped (the cron watchdog still works).")
+        return False
+
+    existing = _task_command(AUTOSTART_TASK)
+    if existing == ('"' + pythonw + '"', '"' + script + '"'):
+        return True                       # already current
+    if not _register_task(AUTOSTART_TASK, pythonw, script):
+        print("[LCARS] note: could not register the scheduled-task auto-heal - "
+              "the cron watchdog still works.")
+        return False
+    print("[LCARS] scheduled-task auto-heal " +
+          ("re-pointed at " + script if existing else
+           "registered: " + AUTOSTART_TASK + " (every " + str(AUTOSTART_MINUTES) +
+           " min, runs without Hermes - survives updates with every Hermes process stopped)"))
+    return True
+
+
+def _all_scripts_dirs(hermes_home):
+    """Synced scripts/ dirs across the resolved home AND the platform defaults.
+
+    HERMES_HOME can point at a single profile, so a stand-down marker written
+    only under that home would be invisible to a watchdog copy running from the
+    platform-default root (and vice versa). Covering both keeps "auto-heal is
+    off" true for every copy that could run.
+
+    A scratch home (journey/CI run under a temp dir) is the exception: it must
+    never write into the real machine's roots, so it only ever touches its own.
+    """
+    if _is_temp_path(hermes_home):
+        return _scripts_dirs(hermes_home)
+    dirs = []
+    for home in [hermes_home] + [r for r in _data_roots() if r and os.path.isdir(r)]:
+        for d in _scripts_dirs(home):
+            if d not in dirs:
+                dirs.append(d)
+    return dirs
+
+
+def _write_disabled_markers(hermes_home, disabled):
+    """(Un)set the watchdog stand-down marker in every synced scripts/ folder.
+
+    `--remove` / `--restore` mean the user does not want the skin any more, and
+    a watchdog that re-applies a missing skin would put the theme straight back
+    - within a minute, now that the scheduled task exists - so the revert would
+    look broken. The marker makes BOTH heal layers (cron job and task) stand
+    down until the installer is run again. Best effort, never fatal.
+    """
+    for sd in _all_scripts_dirs(hermes_home):
+        target = os.path.join(sd, AUTOSTART_DISABLED_NAME)
+        try:
+            if disabled:
+                if os.path.isdir(sd):
+                    with open(target, "w", encoding="utf-8") as f:
+                        f.write("The LCARS dashboard skin was reverted with "
+                                "apply.py --remove / --restore.\n"
+                                "Re-run the installer to switch auto-heal back on.\n")
+            elif os.path.isfile(target):
+                os.remove(target)
+        except OSError:
+            continue
+
+
+def delete_autostart_healer():
+    """Remove the scheduled task (Windows). Returns True when it is gone."""
+    if sys.platform != "win32":
+        return False
+    try:
+        proc = subprocess.run(["schtasks", "/Delete", "/TN", AUTOSTART_TASK, "/F"],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def disable_autoheal(target=None):
+    """Pause both heal layers after a revert. Returns True when Hermes was found."""
+    hermes_home = find_hermes_home() or (hermes_root_from_target(target) if target else None)
+    if not hermes_home:
+        return False
+    _write_disabled_markers(hermes_home, True)
+    # The task is machine-wide, so a scratch/sandbox run (journey test, CI, a
+    # bundle extracted under Temp) must never delete the real one — only a run
+    # against a real Hermes home does. LCARS_NO_AUTOSTART opts out entirely.
+    if not (_is_temp_path(hermes_home) or os.environ.get("LCARS_NO_AUTOSTART")):
+        delete_autostart_healer()
+    print("[LCARS] auto-heal paused - the theme will stay off until you run the "
+          "installer again.")
+    return True
+
+
+def autostart_status(target=None):
+    """One-line readout of how (or whether) the skin recovers after an update."""
+    hermes_home = find_hermes_home() or (hermes_root_from_target(target) if target else None)
+    if not hermes_home:
+        return "unknown - Hermes data folder not found"
+    script = _healer_script(hermes_home)
+    if not script:
+        return "NOT synced - run the installer (without --check) to set it up"
+    if os.path.isfile(os.path.join(os.path.dirname(script), AUTOSTART_DISABLED_NAME)):
+        return "paused (last run reverted the skin; re-run the installer to re-arm)"
+    if sys.platform == "win32":
+        pythonw = _pick_pythonw() or ""
+        if _task_command(AUTOSTART_TASK) == ('"' + pythonw + '"', '"' + script + '"'):
+            return "scheduled task " + AUTOSTART_TASK + " every " + str(AUTOSTART_MINUTES) + " min"
+        return "cron job only - re-run the installer to register " + AUTOSTART_TASK
+    return "cron watchdog (hermes cron)"
 
 
 def _not_found(target, explicit, gui):
@@ -482,6 +774,7 @@ def main():
         i = args.index("--restore")
         name = args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("--") else None
         restore(target, name)
+        disable_autoheal(target)
         return
 
     if "--remove" in args:
@@ -493,6 +786,7 @@ def main():
         else:
             strip_skin(target)
         print("[LCARS] skin removed; original dashboard restored at " + target)
+        disable_autoheal(target)
         return
 
     # ---- default: apply the skin -------------------------------------------
@@ -504,6 +798,7 @@ def main():
         missing = preflight.missing_anchors(target)
         print("[LCARS] dashboard structure: "
               + ("ok" if not missing else "MISSING " + ", ".join(missing)))
+        print("[LCARS] auto-heal after a Hermes update: " + autostart_status(target))
         for w in warnings:
             print("[LCARS] warning: " + w)
         if fatals:
@@ -568,6 +863,9 @@ def main():
         sys.exit(1)
     if proc.returncode == 0 and sync_autoheal(target):
         print("[LCARS] auto-heal watchdog synced to Hermes scripts/ (survives updates)")
+        # …and make it run outside Hermes too: a Hermes update wipes web_dist
+        # AND stops the gateway whose cron ticker would otherwise heal it.
+        ensure_autostart_healer(target)
     if proc.returncode == 0 and has_skin(target):
         print("[LCARS] verified: skin markers present in dashboard — done.")
     elif proc.returncode == 0:
