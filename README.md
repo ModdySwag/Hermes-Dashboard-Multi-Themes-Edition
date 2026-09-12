@@ -22,6 +22,13 @@ Built by Moddy — http://www.moddys.net · Licensed MIT.
   missing and where to get it (and opens the right page for you).
 - **Survives Hermes updates:** a bundled auto-heal watchdog (`lcars_autoheal.py`) re-skins the dashboard after any `hermes update`. The installer registers an OS-level check that runs every minute *outside* Hermes — a Scheduled Task on Windows, a LaunchAgent on macOS, a systemd user timer on Linux — on a normal Python install (never the venv an update replaces), so the theme comes back within about a minute even if you had to stop every Hermes process to update. It syncs itself into every Hermes profile's scripts folder and remembers where the bundle lives, so it works no matter where you extracted the zip. `python3 apply.py --check` prints the current status; `--remove`/`--restore` pause it. See `read me.txt` for details.
 - Revert any time: `python3 apply.py --restore` · Remove: `python3 apply.py --remove`.
+- **Stable chat view.** The `/chat` tab used to jump when you alt-tabbed away and
+  back. Now leaving the window records what the chat looked like, and returning puts
+  it back: the latest message still in view, and if you had scrolled up to read back,
+  you stay there. If nothing moved, nothing is touched. It lets go as soon as you
+  scroll, click or type, and stays out of the way while new output arrives. It ships
+  with the skin; `--no-chat-stability` turns it off and remembers that,
+  `--chat-stability` turns it back on.
 
 ## Quick start
 1. Download `lcars-installer.zip` from the [Releases](../../releases) page and extract it.

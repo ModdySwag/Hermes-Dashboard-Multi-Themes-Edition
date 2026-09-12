@@ -1,0 +1,78 @@
+name: tests
+
+# The installer edits a file it does not own (the dashboard's index.html), so
+# every push runs the sandbox round-trip plus the behavioural harness for the
+# injected chat script. Both are plain Python - no pip installs - and the
+# harness drives the browser the runner is given (CHROME_PATH) or skips loudly.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install a real Chrome (harness runner)
+        uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          chrome-version: stable
+
+      - name: Install a real Firefox (harness runner)
+        # The ubuntu runners ship Firefox as a snap, which needs a session bus to
+        # start and usually fails under `--headless`; this installs a normal build.
+        # Windows runners already have one, and this step is a no-op there.
+        if: runner.os != 'macOS'
+        uses: browser-actions/setup-firefox@v1
+        id: firefox
+        with:
+          firefox-version: latest
+
+      - name: Install Playwright browsers (harness runner)
+        # Playwright drives all three engines from its own builds, which is why
+        # this is the primary path: the action-installed Chrome for Testing cannot
+        # bootstrap its helper processes on the macOS runners, and the ubuntu
+        # runner's Firefox is a snap. The setup-chrome/setup-firefox steps above
+        # stay as the fallback the runner retries with.
+        run: |
+          python -m pip install --quiet playwright
+          python -m playwright install chromium firefox webkit
+          python -m playwright install-deps chromium firefox webkit
+        shell: bash
+        if: runner.os == 'Linux'
+
+      - name: Install Playwright browsers (Windows / macOS)
+        run: |
+          python -m pip install --quiet playwright
+          python -m playwright install chromium firefox webkit
+        shell: bash
+        if: runner.os != 'Linux'
+
+      - name: Sandbox round-trip (apply, idempotence, opt-out, strip, edge cases)
+        env:
+          LCARS_NO_GUI: "1"
+        run: python verify_chat_stable.py tests/fixtures/dashboard/index.html
+
+      - name: Harness for the injected chat script (every browser present)
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          FIREFOX_PATH: ${{ steps.firefox.outputs.firefox-path }}
+          # A missing engine must fail the job, not quietly shrink the run.
+          LCARS_REQUIRE_BROWSERS: ${{ runner.os == 'macOS' && 'chrome,webkit' || 'chrome,firefox,webkit' }}
+        run: python tests/run_chat_stable_harness.py tests/fixtures/dashboard/index.html

@@ -325,6 +325,15 @@ Dashboard requirements:
 Notes:
   - Wallpapers are original works by Moddy (MIT licensed) - see assets/ATTRIBUTION.md.
   - No network calls are made by the skin. No telemetry. No external fonts.
+  - Stable chat view: the skin also installs a small "chat view stability" script on
+    the dashboard's /chat tab. Switching away to another app or tab and coming back
+    used to leave the chat somewhere other than where you left it. Now the view is
+    recorded on the way out and restored on the way back, and nothing is written
+    unless something actually moved. It never forces the view to the bottom, it gets
+    out of the way as soon as you scroll, click or type, and it leaves live output
+    alone. Run the installer with --no-chat-stability to turn it off; that choice is
+    remembered, so the auto-heal keeps honouring it after a Hermes update. Use
+    --chat-stability to turn it back on. The theme is unaffected either way.
 
 ------------------------------------------------------------
 SUPPORT / CREDITS
