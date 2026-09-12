@@ -9,6 +9,9 @@ or credentials.
 ## What it does NOT do
 - No network calls at apply time or at runtime (the dashboard is served locally).
 - No `eval`, no `innerHTML` with external data, no shell-out with user input.
+- The injected chat view-stability script only reads and writes scroll offsets and
+  window positions, in memory. No storage, no network calls, nothing read from the
+  page's text. It lives as long as the tab does.
 - No reading of files outside the Hermes dashboard directory.
 - No collection of telemetry or analytics.
 
@@ -17,6 +20,13 @@ or credentials.
   `backups/` next to the bundle and mirrors it into `HERMES_HOME/lcars-backups/`,
   then applies the skin via `apply_lcars_skin.py`. `--remove` / `--restore`
   reverse it.
+- `apply_lcars_skin.py` injects marker-delimited blocks into the dashboard's
+  `index.html`: the theme layer (head/style/body) plus a chat view-stability
+  add-on. Each apply strips the previous blocks first, so a re-apply is
+  byte-stable; `--no-chat-stability` leaves the add-on out (remembered in
+  `lcars_chat_stability.disabled` next to the bundle), `--chat-stability`
+  re-enables it. Only files inside the dashboard folder and the bundle folder
+  are written.
 - `run.bat` (Windows) may launch the bundled Python installer with
   `/quiet PrependPath=1` only when Python is absent. Review the flags if you
   repackage.

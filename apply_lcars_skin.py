@@ -29,6 +29,15 @@ BRIDGE_JPG = os.path.join(HERE, "lcars-bg.jpg")
 M_HEAD_S, M_HEAD_E = "<!-- LCARS_HEAD_START -->", "<!-- LCARS_HEAD_END -->"
 M_STYLE_S, M_STYLE_E = "<!-- LCARS_STYLE_START -->", "<!-- LCARS_STYLE_END -->"
 M_BODY_S, M_BODY_E = "<!-- LCARS_BODY_START -->", "<!-- LCARS_BODY_END -->"
+# Chat view-stability add-on (own block: stripped/re-injected with the rest).
+M_STABLE_S, M_STABLE_E = "<!-- HERMES_CHAT_VIEW_STABLE_START -->", "<!-- HERMES_CHAT_VIEW_STABLE_END -->"
+
+# Where a "--no-chat-stability" choice is remembered. After every Hermes update
+# the auto-heal runs this engine again through apply.py, with no flags at all,
+# so without a marker on disk the add-on would be back within a minute. The
+# path is overridable for tests.
+STABLE_OFF = os.environ.get("LCARS_CHAT_STABILITY_MARKER",
+                            os.path.join(HERE, "lcars_chat_stability.disabled"))
 
 
 def copy_assets(target):
@@ -355,6 +364,10 @@ def build_style(uri):
       html.lcars-skin .lcars-frame .pea { background:var(--lcars-peach); flex:0 0 90px; }
       html.lcars-skin .lcars-frame .red { background:var(--lcars-red); flex:0 0 40px; border-radius:0 0 0 17px; }
       html.lcars-skin #root { padding-top:34px; box-sizing:border-box; }
+      /* The app root asks for 100dvh, but the frame already took 34px, so its
+         bottom edge landed below the fold. On /chat that hid the TUI input line.
+         Give it the height that is actually left. */
+      html.lcars-skin #root > div { height:calc(100dvh - 34px) !important; }
       html.lcars-skin #root > div,
       html.lcars-skin .bg-background,
       html.lcars-skin [class*="bg-background"] { background-color:transparent !important; background-image:none !important; }
@@ -550,10 +563,246 @@ def build_body():
 """ + M_BODY_E).replace("__THEMES__", names_json)
 
 
+def _write_marker(path):
+    """Remember a choice across re-applies (best effort, never fatal)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("chat view-stability add-on disabled by the user\n")
+        return True
+    except OSError as exc:
+        print("[LCARS] warning: could not remember the chat-stability opt-out ("
+              + str(exc) + ") - the auto-heal will re-enable it")
+
+
+def _clear_marker(path):
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError as exc:
+        print("[LCARS] warning: could not clear " + path + " (" + str(exc) + ")")
+
+
+def build_chat_stable():
+    """Keeps the chat view where the reader left it.
+
+    Alt-tabbing away and back used to move the terminal. The browser runs its
+    own scroll-into-view pass on focus, xterm refits, and the reader lands
+    somewhere they did not pick. So this block notes the view on the way out
+    (page scroll, the offset of every scrollable box around the terminal, and
+    how far the terminal sits from its bottom) and puts it back when focus
+    returns, over a short burst of timers. Timers and not animation frames:
+    the browser's reveal scroll and xterm's refit both land after the frame
+    that raised the event.
+
+    It writes nothing unless something actually moved, and it gives up instead
+    of fighting the page. A view still moving between probes is left alone. A
+    terminal that grew means live output is being followed. A record older than
+    five minutes is dropped rather than replayed, which covers sleep, a monitor
+    that was off, and a bfcache restore. Any wheel, touch, pointer or key press
+    disarms it at once, and three corrections per window is the cap, so a page
+    that disagrees with it cannot loop.
+
+    The engine injects this as its own marker block, strip-and-reinject like
+    the skin blocks, so re-applies and the auto-heal keep it. Pass
+    --no-chat-stability to leave it out.
+    """
+    return M_STABLE_S + """
+    <script>
+      (function () {
+        if (window.__hermesChatViewStable) return;
+        var state = {
+          v: 2,
+          trace: [],          /* recent corrections, for field diagnosis */
+          corrections: 0,     /* writes made in the current guard window */
+          staleMs: 300000,    /* test seam: how old a record may be to be used */
+          maxCorrections: 3,
+        };
+        window.__hermesChatViewStable = state;
+
+        var PROBE_MS = [0, 60, 150, 350, 700, 1200];
+        var EPS = 0.5;        /* scroll offsets are floats; below this is noise */
+        var BOTTOM_SLACK = 2; /* a couple of px off the bottom still counts as the bottom */
+        var timers = [];
+        var rec = null;       /* numbers only - no DOM node is retained here */
+        var armed = false;
+        var lastSeen = null;
+
+        function viewport() { return document.querySelector(".xterm-viewport"); }
+
+        /* The terminal viewport is not in this chain on purpose: it has its own
+           rules below (slack at the bottom, exact offset when scrolled up).
+           What is captured here are the boxes around it, plus the document
+           scroller, since the browser's focus-reveal pass can shift those. */
+        function chain() {
+          var out = [], el = viewport();
+          el = el ? el.parentElement : document.scrollingElement;
+          while (el && el !== document.documentElement) {
+            out.push(el);
+            el = el.parentElement;
+          }
+          var sc = document.scrollingElement;
+          if (sc && out.indexOf(sc) === -1) out.push(sc);
+          return out;
+        }
+
+        /* [scrollTop, scrollHeight] per box, as numbers, so nothing here keeps a
+           DOM node alive between transitions. The scrollHeight rides along to
+           spot a box that was re-laid-out. */
+        function readOffsets() {
+          return chain().map(function (el) { return [el.scrollTop, el.scrollHeight]; });
+        }
+
+        /* Put each offset back, in order. A box whose content height changed is
+           skipped, and a chain that no longer has the same shape is left alone
+           entirely: the layout moved for a reason, and the old numbers no longer
+           mean what they meant. */
+        function writeOffsets(want) {
+          var els = chain(), moved = false;
+          if (els.length !== want.length) return false;
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i], w = want[i];
+            if (el.scrollHeight === w[1] && Math.abs(el.scrollTop - w[0]) > EPS) {
+              el.scrollTop = w[0];
+              moved = true;
+            }
+          }
+          return moved;
+        }
+
+        function capture() {
+          try {
+            var vp = viewport();
+            var max = vp ? Math.max(0, vp.scrollHeight - vp.clientHeight) : 0;
+            rec = {
+              at: Date.now(),
+              win: window.scrollY || 0,
+              offsets: readOffsets(),
+              vp: vp ? { top: vp.scrollTop, gap: max - vp.scrollTop, sh: vp.scrollHeight } : null,
+            };
+          } catch (e) { rec = null; }
+        }
+
+        function clearTimers() { while (timers.length) clearTimeout(timers.pop()); }
+
+        function disarm() {
+          armed = false;
+          lastSeen = null;
+          clearTimers();
+        }
+
+        function note(kind) {
+          state.trace.push({ at: Date.now(), kind: kind, vpTop: rec && rec.vp ? rec.vp.top : null });
+          if (state.trace.length > 20) state.trace.shift();
+        }
+
+        function restore() {
+          if (!rec || !armed) return;
+          try {
+            if (Date.now() - rec.at > state.staleMs) { disarm(); return; }
+            var vp = viewport();
+            /* The terminal grew while we were away: output is being followed
+               on purpose. Standing down beats pinning a stale position. */
+            if (vp && rec.vp && vp.scrollHeight !== rec.vp.sh) { disarm(); return; }
+            var now = vp ? vp.scrollTop : null;
+            /* Still moving between probes (refit, reflow, streaming output):
+               that is the page doing its job, not the artifact we correct. */
+            if (now !== null && lastSeen !== null && Math.abs(now - lastSeen) > EPS) {
+              lastSeen = now;
+              return;
+            }
+            lastSeen = now;
+            var moved = writeOffsets(rec.offsets);
+            if (vp && rec.vp) {
+              var max = Math.max(0, vp.scrollHeight - vp.clientHeight);
+              if (rec.vp.gap <= BOTTOM_SLACK) {
+                /* The reader was at the bottom. WebKit stores a scroll offset
+                   rounded to a whole pixel, so a position a pixel off the
+                   bottom is the bottom: leave it instead of nudging the view
+                   for something nobody can see. */
+                if (max - vp.scrollTop > BOTTOM_SLACK) {
+                  vp.scrollTop = max;
+                  moved = true;
+                }
+              } else {
+                var want = Math.min(rec.vp.top, max);
+                if (Math.abs(vp.scrollTop - want) > EPS) {
+                  vp.scrollTop = want;
+                  moved = true;
+                }
+              }
+            }
+            if (Math.abs((window.scrollY || 0) - rec.win) > EPS) {
+              window.scrollTo(0, rec.win);
+              moved = true;
+            }
+            if (moved) {
+              state.corrections += 1;
+              note("restore");
+              /* Bound the damage if the page and this guard ever disagree. */
+              if (state.corrections >= state.maxCorrections) disarm();
+            }
+          } catch (e) {}
+        }
+
+        function arm() {
+          if (!rec) return;
+          disarm();
+          state.corrections = 0;
+          armed = true;
+          PROBE_MS.forEach(function (ms) { timers.push(setTimeout(restore, ms)); });
+        }
+
+        /* Real input always wins: disarm on anything the user does. Checked
+           before touching the timer list because wheel/touchmove are hot. */
+        ["wheel", "touchstart", "touchmove", "pointerdown", "mousedown", "keydown"].forEach(function (t) {
+          window.addEventListener(t, function () {
+            if (armed || timers.length) disarm();
+          }, { capture: true, passive: true });
+        });
+
+        window.addEventListener("blur", function () { capture(); disarm(); }, true);
+        window.addEventListener("pagehide", function () { capture(); disarm(); }, true);
+        window.addEventListener("pageshow", function (e) {
+          /* bfcache: the document came back with its own layout, so what is on
+             screen now is the baseline. Replaying an hours-old anchor, or
+             scrolling to a position the restored layout no longer has, is worse
+             than doing nothing. */
+          if (e && e.persisted) { capture(); disarm(); return; }
+          if (!rec) capture();
+          arm();
+        }, true);
+        document.addEventListener("visibilitychange", function () {
+          if (document.visibilityState === "hidden") { capture(); disarm(); }
+          else arm();
+        });
+        window.addEventListener("focus", function () { if (!rec) capture(); arm(); }, true);
+
+        /* Resize: hold the reader's anchor (bottom stays bottom, a scrolled
+           view keeps its distance) instead of snapping to the bottom. A
+           resize that arrives while the guard is armed keeps the pre-resize
+           record; a standalone one re-baselines on the current view. */
+        var rz = null;
+        window.addEventListener("resize", function () {
+          if (!rec || !armed) capture();
+          if (rz) clearTimeout(rz);
+          rz = setTimeout(function () { rz = null; arm(); }, 0);
+        });
+      })();
+    </script>
+""" + M_STABLE_E
+
+
 def main():
     ap = argparse.ArgumentParser(description="Apply the LCARS multi-theme reskin to the Hermes dashboard (visual only).")
     ap.add_argument("--target", help="Explicit path to web_dist/index.html (auto-detected if omitted).")
     ap.add_argument("--print-target", action="store_true", help="Print the resolved target path and exit.")
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument("--no-chat-stability", action="store_true",
+                       help="Skin the dashboard but leave the chat view-stability add-on out. "
+                            "Remembered, so the auto-heal keeps honouring it.")
+    group.add_argument("--chat-stability", action="store_true",
+                       help="Re-enable the chat view-stability add-on and forget an earlier opt-out.")
     args = ap.parse_args()
 
     target = find_target(args.target)
@@ -577,11 +826,23 @@ def main():
     web_dist = os.path.dirname(os.path.abspath(target))
     html = open(target, encoding="utf-8").read()
 
+    # A marker pair that appears an unequal number of times means the dashboard
+    # was edited by hand (or a previous write was interrupted). Stripping leaves
+    # the unmatched marker where it is, so say so instead of silently layering a
+    # second copy of the block on top of it.
+    for _s, _e in ((M_HEAD_S, M_HEAD_E), (M_STYLE_S, M_STYLE_E),
+                   (M_BODY_S, M_BODY_E), (M_STABLE_S, M_STABLE_E)):
+        if html.count(_s) != html.count(_e):
+            print("[LCARS] warning: unmatched marker " + _s + " ("
+                  + str(html.count(_s)) + " start / " + str(html.count(_e))
+                  + " end) - left untouched, check the file by hand")
+
     html, asset_fixes = fix_stale_asset_references(html, web_dist)
 
     for s, e, sep_before in ((M_HEAD_S, M_HEAD_E, True),
                              (M_STYLE_S, M_STYLE_E, False),
-                             (M_BODY_S, M_BODY_E, False)):
+                             (M_BODY_S, M_BODY_E, False),
+                             (M_STABLE_S, M_STABLE_E, False)):
         html = strip_block(html, s, e, separator_before=sep_before)
 
     for anchor in ("<title>", "</head>", '<div id="root">', "</body>"):
@@ -591,7 +852,18 @@ def main():
     html = re.sub(r"<title>.*?</title>", "<title>Moddys Dashboard</title>", html, count=1, flags=re.S)
     html = html.replace("</title>", "</title>\n" + build_head(), 1)
     html = html.replace("</head>", build_style(uri) + "\n  </head>", 1)
-    html = html.replace("</body>", build_body() + "\n  </body>", 1)
+    body = build_body()
+    # Honour (and record) the opt-out: an explicit --no-chat-stability writes the
+    # marker, --chat-stability clears it, and a plain run - which is what the
+    # auto-heal does - follows whatever the user last chose.
+    if args.no_chat_stability:
+        _write_marker(STABLE_OFF)
+    elif args.chat_stability:
+        _clear_marker(STABLE_OFF)
+    stability_on = not (args.no_chat_stability or os.path.isfile(STABLE_OFF))
+    if stability_on:
+        body += "\n" + build_chat_stable()
+    html = html.replace("</body>", body + "\n  </body>", 1)
 
     tmp = target + ".tmp"
     open(tmp, "w", encoding="utf-8").write(html)
@@ -604,6 +876,9 @@ def main():
     print("[LCARS] bridge photo embedded: " + ("yes" if "data:image/jpeg" in html else "NO"))
     print("[LCARS] theme cycler present: " + ("yes" if 'id="lcars-theme-btn"' in html else "NO"))
     print("[LCARS] options panel present: " + ("yes" if 'id="lcars-panel"' in html else "NO"))
+    print("[LCARS] chat view stability present: "
+          + ("yes" if M_STABLE_S in html else "no" + ("" if stability_on else " (opted out; "
+             + STABLE_OFF + " - run with --chat-stability to restore)")))
 
 
 def _main():

@@ -25,6 +25,8 @@ Usage:
   python3 apply.py --list-backups  # show saved backups
   python3 apply.py --check         # report bundle + dashboard readiness, change nothing
   python3 apply.py --print-target  # print the resolved dashboard path, change nothing
+  python3 apply.py --no-chat-stability  # skin only; leave the chat view-stability add-on out
+  python3 apply.py --chat-stability     # re-enable the add-on (forgets an earlier opt-out)
   python3 apply.py --target C:\\path\\to\\web_dist\\index.html   # explicit path
 
 Set HERMES_HOME if auto-detect doesn't find your install.
@@ -79,6 +81,8 @@ MARKERS = [
     "<!-- LCARS_HEAD_START -->", "<!-- LCARS_HEAD_END -->",
     "<!-- LCARS_STYLE_START -->", "<!-- LCARS_STYLE_END -->",
     "<!-- LCARS_BODY_START -->", "<!-- LCARS_BODY_END -->",
+    # Chat view-stability block injected by the engine alongside the skin.
+    "<!-- HERMES_CHAT_VIEW_STABLE_START -->", "<!-- HERMES_CHAT_VIEW_STABLE_END -->",
 ]
 
 
@@ -1070,7 +1074,11 @@ def main():
         print("[LCARS] backed up current dashboard to backups/" + ts)
 
     try:
-        proc = subprocess.run([sys.executable, SKIN, "--target", target])
+        cmd = [sys.executable, SKIN, "--target", target]
+        for flag in ("--no-chat-stability", "--chat-stability"):
+            if flag in args:
+                cmd.append(flag)
+        proc = subprocess.run(cmd)
     except FileNotFoundError:
         sys.stderr.write(
             "Could not start Python to apply the skin.\n"
