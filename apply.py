@@ -410,6 +410,7 @@ def sync_autoheal(target=None):
 
 
 AUTOSTART_TASK = "LCARS_Dashboard_AutoHeal"   # Windows Scheduled Task name
+AUTOSTART_LABEL = "com.moddyswag.lcars-autoheal"   # launchd label / systemd unit base
 AUTOSTART_MINUTES = 1                        # how often it re-checks for the skin
 AUTOSTART_DISABLED_NAME = "lcars_autoheal.disabled"   # stand-down marker
 
@@ -553,50 +554,223 @@ def _register_task(task_name, pythonw, script):
     return proc.returncode == 0
 
 
-def ensure_autostart_healer(target=None):
+def ensure_autostart_healer(target=None, platform=None):
     """Make the auto-heal watchdog run even when NO Hermes process is alive.
 
     WHY this exists next to the cron job: Hermes' cron ticker only runs inside a
     live gateway or desktop backend (hermes_cli/cron.py - there is no standalone
     cron daemon), and `hermes update` both wipes web_dist and stops those
     processes. So the cron watchdog cannot fire until a gateway is back, and
-    then only on its next tick - up to 30 minutes of a reverted dashboard. A
-    Windows Scheduled Task runs outside the Hermes process tree entirely, on a
-    non-venv Python, so the skin returns within AUTOSTART_MINUTES regardless of
-    what the update chain did to Hermes' processes.
+    then only on its next tick - up to 30 minutes of a reverted dashboard.
+    Each platform therefore gets an OS-level scheduler that runs OUTSIDE the
+    Hermes process tree, on a Python that is not the venv:
 
-    Best-effort and idempotent: only touches schtasks when the task is missing
-    or points somewhere else. Never fatal. Set LCARS_NO_AUTOSTART=1 to skip it
-    (used by the journey/CI tests so they leave no tasks on the host).
+      Windows  Scheduled Task (schtasks), every AUTOSTART_MINUTES
+      macOS    LaunchAgent in ~/Library/LaunchAgents, every AUTOSTART_MINUTES
+      Linux    systemd user timer, every AUTOSTART_MINUTES
+
+    Best-effort and idempotent: the scheduler is only touched when something is
+    missing or points elsewhere. Never fatal. Set LCARS_NO_AUTOSTART=1 to skip
+    it (the journey/CI tests do, so they leave nothing on the host).
+
+    `platform` is injectable so the cross-OS tests can drive each branch from
+    one host; production callers omit it.
 
     Returns True when a healer outside Hermes is in place.
     """
-    if sys.platform != "win32":
-        return False                      # cron path only; other OSes unchanged
     if os.environ.get("LCARS_NO_AUTOSTART"):
+        return False
+    plat = platform or sys.platform
+    if not (plat == "win32" or plat == "darwin" or plat.startswith("linux")):
         return False
     hermes_home = find_hermes_home() or (hermes_root_from_target(target) if target else None)
     if not hermes_home:
         return False
     script = _healer_script(hermes_home)
-    pythonw = _pick_pythonw()
-    if not script or not pythonw:
-        print("[LCARS] note: no non-Hermes Python found - the scheduled-task "
-              "auto-heal was skipped (the cron watchdog still works).")
+    if not script:
         return False
 
-    existing = _task_command(AUTOSTART_TASK)
-    if existing == ('"' + pythonw + '"', '"' + script + '"'):
-        return True                       # already current
-    if not _register_task(AUTOSTART_TASK, pythonw, script):
-        print("[LCARS] note: could not register the scheduled-task auto-heal - "
-              "the cron watchdog still works.")
+    if plat == "win32":
+        pythonw = _pick_pythonw()
+        if not pythonw:
+            print("[LCARS] note: no non-Hermes Python found - the scheduled-task "
+                  "auto-heal was skipped (the cron watchdog still works).")
+            return False
+        existing = _task_command(AUTOSTART_TASK)
+        if existing == ('"' + pythonw + '"', '"' + script + '"'):
+            return True                   # already current
+        if not _register_task(AUTOSTART_TASK, pythonw, script):
+            print("[LCARS] note: could not register the scheduled-task auto-heal - "
+                  "the cron watchdog still works.")
+            return False
+        print("[LCARS] scheduled-task auto-heal " +
+              ("re-pointed at " + script if existing else
+               "registered: " + AUTOSTART_TASK + " (every " + str(AUTOSTART_MINUTES) +
+               " min, runs without Hermes - survives updates with every Hermes process stopped)"))
+        return True
+
+    python3 = _pick_python3()
+    if not python3:
+        print("[LCARS] note: no python3 outside the Hermes venv was found - the "
+              "auto-heal was left to the hermes cron job.")
         return False
-    print("[LCARS] scheduled-task auto-heal " +
-          ("re-pointed at " + script if existing else
-           "registered: " + AUTOSTART_TASK + " (every " + str(AUTOSTART_MINUTES) +
-           " min, runs without Hermes - survives updates with every Hermes process stopped)"))
-    return True
+
+    if plat == "darwin":
+        if not _write_if_changed(_plist_path(), _plist_text(python3, script)):
+            return True                   # already current
+        ok = _register_launchd()
+        if ok:
+            print("[LCARS] LaunchAgent auto-heal registered: " + AUTOSTART_LABEL +
+                  " (every " + str(AUTOSTART_MINUTES) + " min, runs without Hermes)")
+        else:
+            print("[LCARS] note: wrote " + _plist_path() + " but could not load it - "
+                  "load it yourself with: launchctl load -w " + _plist_path())
+        return ok
+
+    # linux: a systemd user timer (service + timer unit pair)
+    d = _systemd_dir()
+    svc = os.path.join(d, AUTOSTART_LABEL + ".service")
+    changed = _write_if_changed(svc, _systemd_service_text(python3, script))
+    changed = _write_if_changed(os.path.join(d, AUTOSTART_LABEL + ".timer"),
+                                _systemd_timer_text()) or changed
+    if not changed:
+        return True                       # already current
+    if _register_systemd():
+        print("[LCARS] systemd user timer auto-heal registered: " + AUTOSTART_LABEL +
+              ".timer (every " + str(AUTOSTART_MINUTES) + " min, runs without Hermes)")
+        return True
+    print("[LCARS] note: wrote " + svc + " and the matching .timer but could not enable "
+          "them - enable them yourself with: systemctl --user enable --now "
+          + AUTOSTART_LABEL + ".timer")
+    return False
+
+
+def _pick_python3():
+    """A ``python3`` outside the Hermes venv (macOS / Linux), or None.
+
+    Same reasoning as ``_pick_pythonw``: the venv is what `hermes update`
+    replaces and locks, so a healer must never depend on it.
+    """
+    cands = [shutil.which("python3") or "",
+             "/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"]
+    cands.append(sys.executable or "")
+    for cand in cands:
+        if not cand or not os.path.isfile(cand):
+            continue
+        lowered = cand.replace("\\", "/").lower()
+        if "hermes-agent" in lowered or "/venv/" in lowered:
+            continue
+        return cand
+    return None
+
+
+def _plist_path():
+    return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents",
+                        AUTOSTART_LABEL + ".plist")
+
+
+def _systemd_dir():
+    return os.path.join(os.path.expanduser("~"), ".config", "systemd", "user")
+
+
+def _read_text(path):
+    """File contents, or "" when it cannot be read (missing = absent)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _write_if_changed(path, text):
+    """Write *text* to *path* unless it already matches. True when written."""
+    try:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as f:
+                if f.read() == text:
+                    return False
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        return True
+    except OSError:
+        return False
+
+
+def _plist_text(python3, script):
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '  <key>Label</key>\n'
+        '  <string>' + AUTOSTART_LABEL + '</string>\n'
+        '  <key>ProgramArguments</key>\n'
+        '  <array>\n'
+        '    <string>' + python3 + '</string>\n'
+        '    <string>' + script + '</string>\n'
+        '  </array>\n'
+        '  <key>RunAtLoad</key>\n'
+        '  <true/>\n'
+        '  <key>StartInterval</key>\n'
+        '  <integer>' + str(AUTOSTART_MINUTES * 60) + '</integer>\n'
+        '</dict>\n'
+        '</plist>\n'
+    )
+
+
+def _systemd_service_text(python3, script):
+    return (
+        '[Unit]\n'
+        'Description=Re-apply the LCARS dashboard skin after a Hermes update\n'
+        '\n'
+        '[Service]\n'
+        'Type=oneshot\n'
+        'ExecStart=' + python3 + ' ' + script + '\n'
+    )
+
+
+def _systemd_timer_text():
+    return (
+        '[Unit]\n'
+        'Description=Check every ' + str(AUTOSTART_MINUTES) + ' min whether the LCARS '
+        'dashboard skin is missing\n'
+        '\n'
+        '[Timer]\n'
+        'OnBootSec=' + str(AUTOSTART_MINUTES) + 'min\n'
+        'OnUnitActiveSec=' + str(AUTOSTART_MINUTES) + 'min\n'
+        'AccuracySec=10s\n'
+        'Unit=' + AUTOSTART_LABEL + '.service\n'
+        '\n'
+        '[Install]\n'
+        'WantedBy=timers.target\n'
+    )
+
+
+def _run_quiet(cmd):
+    """Run a scheduler command best-effort. True on exit 0."""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _register_launchd():
+    """Load the LaunchAgent (bootstrap on modern macOS, load -w as fallback)."""
+    plist = _plist_path()
+    if hasattr(os, "getuid"):
+        if _run_quiet(["launchctl", "bootstrap", "gui/" + str(os.getuid()), plist]):
+            return True
+    return _run_quiet(["launchctl", "load", "-w", plist])
+
+
+def _register_systemd():
+    """Reload the user manager and enable + start the timer."""
+    _run_quiet(["systemctl", "--user", "daemon-reload"])
+    return _run_quiet(["systemctl", "--user", "enable", "--now",
+                       AUTOSTART_LABEL + ".timer"])
 
 
 def _all_scripts_dirs(hermes_home):
@@ -644,16 +818,47 @@ def _write_disabled_markers(hermes_home, disabled):
             continue
 
 
-def delete_autostart_healer():
-    """Remove the scheduled task (Windows). Returns True when it is gone."""
-    if sys.platform != "win32":
-        return False
-    try:
-        proc = subprocess.run(["schtasks", "/Delete", "/TN", AUTOSTART_TASK, "/F"],
-                              capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return proc.returncode == 0
+def delete_autostart_healer(platform=None):
+    """Remove the OS-level healer for this platform. True when it is gone.
+
+    Windows: delete the scheduled task. macOS: bootout/unload the LaunchAgent
+    and remove the plist. Linux: disable + stop the timer and remove the unit
+    files. Best effort - a missing scheduler entry is not an error.
+    """
+    plat = platform or sys.platform
+    if plat == "win32":
+        try:
+            proc = subprocess.run(["schtasks", "/Delete", "/TN", AUTOSTART_TASK, "/F"],
+                                  capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return proc.returncode == 0
+    if plat == "darwin":
+        plist = _plist_path()
+        gone = not os.path.isfile(plist)
+        for cmd in (["launchctl", "bootout", "gui/" + str(getattr(os, "getuid", lambda: 0)()),
+                     plist],
+                    ["launchctl", "unload", "-w", plist]):
+            _run_quiet(cmd)
+        try:
+            if os.path.isfile(plist):
+                os.remove(plist)
+            return True
+        except OSError:
+            return gone
+    if plat.startswith("linux"):
+        _run_quiet(["systemctl", "--user", "disable", "--now", AUTOSTART_LABEL + ".timer"])
+        removed = True
+        for name in (AUTOSTART_LABEL + ".service", AUTOSTART_LABEL + ".timer"):
+            path = os.path.join(_systemd_dir(), name)
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError:
+                removed = False
+        _run_quiet(["systemctl", "--user", "daemon-reload"])
+        return removed
+    return False
 
 
 def disable_autoheal(target=None):
@@ -662,9 +867,10 @@ def disable_autoheal(target=None):
     if not hermes_home:
         return False
     _write_disabled_markers(hermes_home, True)
-    # The task is machine-wide, so a scratch/sandbox run (journey test, CI, a
-    # bundle extracted under Temp) must never delete the real one — only a run
-    # against a real Hermes home does. LCARS_NO_AUTOSTART opts out entirely.
+    # The OS-level healer is machine-wide (Windows task) or a per-user agent on
+    # the real home, so a scratch/sandbox run (journey test, CI, a bundle
+    # extracted under Temp) must never remove the real one. LCARS_NO_AUTOSTART
+    # opts out entirely.
     if not (_is_temp_path(hermes_home) or os.environ.get("LCARS_NO_AUTOSTART")):
         delete_autostart_healer()
     print("[LCARS] auto-heal paused - the theme will stay off until you run the "
@@ -672,8 +878,9 @@ def disable_autoheal(target=None):
     return True
 
 
-def autostart_status(target=None):
+def autostart_status(target=None, platform=None):
     """One-line readout of how (or whether) the skin recovers after an update."""
+    plat = platform or sys.platform
     hermes_home = find_hermes_home() or (hermes_root_from_target(target) if target else None)
     if not hermes_home:
         return "unknown - Hermes data folder not found"
@@ -682,11 +889,21 @@ def autostart_status(target=None):
         return "NOT synced - run the installer (without --check) to set it up"
     if os.path.isfile(os.path.join(os.path.dirname(script), AUTOSTART_DISABLED_NAME)):
         return "paused (last run reverted the skin; re-run the installer to re-arm)"
-    if sys.platform == "win32":
+    every = " every " + str(AUTOSTART_MINUTES) + " min"
+    if plat == "win32":
         pythonw = _pick_pythonw() or ""
         if _task_command(AUTOSTART_TASK) == ('"' + pythonw + '"', '"' + script + '"'):
-            return "scheduled task " + AUTOSTART_TASK + " every " + str(AUTOSTART_MINUTES) + " min"
+            return "scheduled task " + AUTOSTART_TASK + every
         return "cron job only - re-run the installer to register " + AUTOSTART_TASK
+    if plat == "darwin":
+        if _plist_text(_pick_python3() or "", script) == _read_text(_plist_path()):
+            return "LaunchAgent " + AUTOSTART_LABEL + every
+        return "cron job only - re-run the installer to write the LaunchAgent"
+    if plat.startswith("linux"):
+        if (_systemd_timer_text() == _read_text(os.path.join(_systemd_dir(), AUTOSTART_LABEL + ".timer"))
+                and os.path.isfile(os.path.join(_systemd_dir(), AUTOSTART_LABEL + ".service"))):
+            return "systemd user timer " + AUTOSTART_LABEL + every
+        return "cron job only - re-run the installer to write the systemd timer"
     return "cron watchdog (hermes cron)"
 
 

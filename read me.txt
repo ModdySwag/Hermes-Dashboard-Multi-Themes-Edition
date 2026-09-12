@@ -196,32 +196,30 @@ Two layers protect it:
      dashboard and puts the skin back whenever it is missing. When the skin is
      already present it stays completely silent.
 
-     On Windows the installer registers this for you as a scheduled task named
-     LCARS_Dashboard_AutoHeal that runs once a minute - no setup, nothing to
-     remember. Why a Windows task and not just a Hermes cron job? Hermes' cron
-     ticker only runs inside a live gateway or desktop backend, and a Hermes
-     update stops those processes - which is exactly when the dashboard file
-     gets overwritten. A Scheduled Task runs outside Hermes entirely, using a
+     The installer registers an OS-level check for you on every platform, so
+     there is nothing to set up and nothing to remember:
+
+       Windows   scheduled task  LCARS_Dashboard_AutoHeal          (every minute)
+       macOS     LaunchAgent     com.moddyswag.lcars-autoheal       (every minute)
+       Linux     systemd user timer  com.moddyswag.lcars-autoheal.timer
+
+     Why an OS scheduler and not just a Hermes cron job? Hermes' cron ticker
+     only runs inside a live gateway or desktop backend, and a Hermes update
+     stops those processes - which is exactly when the dashboard file gets
+     overwritten. All three of the above run outside Hermes entirely, using a
      normal Python install (never the Hermes venv, since that is what an update
      replaces), so the theme returns within about a minute even if you had to
      close everything - gateway, dashboard, every hermes.exe - before updating.
 
-     On macOS and Linux, register the Hermes cron job yourself (one time):
+     You can still also use a Hermes cron job as an extra layer if you like:
 
        hermes cron create "*/30 * * * *" \
          --name "LCARS dashboard auto-heal" \
          --script "lcars_autoheal.py" \
          --no-agent --deliver local
 
-     The cron job needs a running gateway to tick, so on those platforms the
-     skin comes back once the gateway is up again (or immediately if you re-run
-     run.sh). If you want the always-on behaviour Windows gets, point your own
-     scheduler at lcars_autoheal.py - it is plain Python and uses nothing from
-     Hermes:
-
-       crontab -e
-       */1 * * * * /usr/bin/python3 "$HOME/.local/share/hermes/scripts/lcars_autoheal.py"
-       (macOS: the same line in launchd, or a systemd user timer on Linux)
+     (It only ticks while a gateway or the desktop app is running, so it is a
+     backstop rather than the main protection.)
 
   Every time you run run.bat / run.sh / apply.py, the latest version of
   lcars_autoheal.py is auto-copied into Hermes' scripts folder(s) — for the
@@ -245,15 +243,25 @@ Two layers protect it:
 
 Checking it
   python3 apply.py --check        # one line: how the skin recovers after an update
-  hermes cron list                # the macOS / Linux cron job, if you registered one
-  schtasks /Query /TN LCARS_Dashboard_AutoHeal     # the Windows scheduled task
+  Windows:  schtasks /Query /TN LCARS_Dashboard_AutoHeal
+  macOS:    launchctl list | grep lcars           (or: ls ~/Library/LaunchAgents)
+  Linux:    systemctl --user list-timers | grep lcars
+  hermes cron list                # only if you also added the Hermes cron job
 
 Turning it off
   python3 apply.py --remove       (or --restore) pauses auto-heal for you: the
-  Windows task is deleted and a stand-down marker stops the watchdog, so the
+  OS-level check is removed and a stand-down marker stops the watchdog, so the
   theme stays off until you run the installer again.
-  By hand:  schtasks /Delete /TN LCARS_Dashboard_AutoHeal /F     (Windows)
-            hermes cron remove <job-id>                          (macOS / Linux)
+  By hand:
+    Windows:  schtasks /Delete /TN LCARS_Dashboard_AutoHeal /F
+    macOS:    launchctl bootout gui/$UID ~/Library/LaunchAgents/com.moddyswag.lcars-autoheal.plist
+    Linux:    systemctl --user disable --now com.moddyswag.lcars-autoheal.timer
+              rm ~/.config/systemd/user/com.moddyswag.lcars-autoheal.{service,timer}
+    hermes cron remove <job-id>     (only if you added the Hermes cron job)
+
+  One Linux note: a user timer runs while you are logged in. If you want it to
+  fire even before you log in after a reboot, enable lingering for your account:
+      sudo loginctl enable-linger $USER
 
 When it has to act, the watchdog writes a line to lcars_autoheal.log next to the
 script in Hermes' scripts folder. Silence there means it never needed to do
