@@ -44,20 +44,23 @@ jobs:
         with:
           firefox-version: latest
 
-      - name: Install Playwright WebKit (harness runner)
-        # WebKit is the only Safari-family engine available off a Mac. The harness
-        # runner picks it up automatically once Playwright sits in this python.
+      - name: Install Playwright browsers (harness runner)
+        # Playwright drives all three engines from its own builds, which is why
+        # this is the primary path: the action-installed Chrome for Testing cannot
+        # bootstrap its helper processes on the macOS runners, and the ubuntu
+        # runner's Firefox is a snap. The setup-chrome/setup-firefox steps above
+        # stay as the fallback the runner retries with.
         run: |
           python -m pip install --quiet playwright
-          python -m playwright install webkit
-          python -m playwright install-deps webkit
+          python -m playwright install chromium firefox webkit
+          python -m playwright install-deps chromium firefox webkit
         shell: bash
         if: runner.os == 'Linux'
 
-      - name: Install Playwright WebKit (Windows / macOS)
+      - name: Install Playwright browsers (Windows / macOS)
         run: |
           python -m pip install --quiet playwright
-          python -m playwright install webkit
+          python -m playwright install chromium firefox webkit
         shell: bash
         if: runner.os != 'Linux'
 

@@ -91,12 +91,14 @@ def find_firefox():
     return first_existing(FIREFOX_CANDIDATES, FIREFOX_NAMES, "FIREFOX_PATH")
 
 
-def webkit_python():
+def playwright_python():
     """An interpreter that can `import playwright`, or None.
 
-    WebKit needs Playwright, which this bundle does not depend on, so the check
-    is optional: this interpreter first, then whatever LCARS_PLAYWRIGHT_PYTHON
-    points at. No interpreter with Playwright means WebKit is skipped loudly.
+    Playwright drives all three engines from its own builds, which is the only
+    way to check WebKit here and the only way Chrome runs on macOS runners (the
+    action's Chrome for Testing cannot bootstrap its helper processes there).
+    The bundle does not depend on Playwright, so this stays optional: without it
+    the CLI browsers are used and WebKit is skipped with a loud line.
     """
     candidates = [sys.executable]
     env = os.environ.get("LCARS_PLAYWRIGHT_PYTHON")
@@ -201,9 +203,15 @@ def chrome_cmd(exe, profile, scale, url):
     return cmd
 
 
-def webkit_cmd(python, scale, url, hold=40):
-    launcher = os.path.join(HERE, "webkit_launcher.py")
-    return [python, launcher, url, str(hold), "--scale", str(scale)]
+# Playwright's name for the Chromium engine; the runner calls it "chrome" because
+# that is what the installed-browser fallback is.
+PW_ENGINE = {"chrome": "chromium", "firefox": "firefox", "webkit": "webkit"}
+
+
+def pw_cmd(python, engine, scale, url, hold=40):
+    """Playwright launcher for one engine (chromium, firefox or webkit)."""
+    launcher = os.path.join(HERE, "playwright_launcher.py")
+    return [python, launcher, PW_ENGINE[engine], url, str(hold), "--scale", str(scale)]
 
 
 def firefox_cmd(exe, profile, scale, url):
@@ -226,23 +234,26 @@ def tail(path, lines=20):
     return "\n".join("  " + row for row in rows[-lines:])
 
 
-def run_pass(browser, exe, page_path, scale):
-    """One browser, one device scale. Returns (results, note, browser_log)."""
+def run_pass(engine, mode, exe, page_path, scale):
+    """One engine, one device scale. Returns (results, note, browser_log).
+
+    `mode` is "pw" (Playwright's own build) or "cli" (the installed browser).
+    """
     results = _Results()
     httpd, port = serve(results, page_path)
-    profile = tempfile.mkdtemp(prefix="chat-stable-%s-" % browser)
+    profile = tempfile.mkdtemp(prefix="chat-stable-%s-" % engine)
     url = "http://127.0.0.1:%d/harness.html" % port
-    if browser == "chrome":
+    if mode == "pw":
+        cmd = pw_cmd(exe, engine, scale, url)
+    elif engine == "chrome":
         cmd = chrome_cmd(exe, profile, scale, url)
-    elif browser == "webkit":
-        cmd = webkit_cmd(exe, scale, url)
     else:
         cmd = firefox_cmd(exe, profile, scale, url)
     # The browser's own output is the only evidence when a launch fails, so keep
     # it instead of sending it to DEVNULL (that blind spot made the first CI
     # run's failures guesswork).
     log_path = os.path.join(tempfile.gettempdir(),
-                            "chat-stable-%s-%s.log" % (browser, scale))
+                            "chat-stable-%s-%s.log" % (engine, scale))
     proc = None
     parsed = None
     try:
@@ -317,47 +328,54 @@ def main():
     page = apply_and_build(live)
     print("harness: " + page)
 
-    available = []
-    if browsers_wanted in ("all", "chrome"):
-        exe = find_chrome()
-        if exe:
-            available.append(("chrome", exe))
+    # Which engines to run, and how to drive each one. Playwright first: its own
+    # builds behave the same on every platform, where the installed-browser CLI
+    # paths differ per OS (and Chrome for Testing on a macOS runner cannot
+    # bootstrap its helper processes at all). The installed browser stays as a
+    # fallback, both when Playwright is absent and as one retry when a Playwright
+    # pass comes up short.
+    wanted = ["chrome", "firefox", "webkit"] if browsers_wanted == "all" else [browsers_wanted]
+    pw = None if browsers_wanted == "cli" else playwright_python()
+    if browsers_wanted == "cli":
+        wanted = ["chrome", "firefox"]
+    plans, cli_retry = [], {}
+    for engine in wanted:
+        cli = find_chrome() if engine == "chrome" else (None if engine == "webkit" else find_firefox())
+        if pw:
+            plans.append((engine, "pw", pw))
+            if cli:
+                cli_retry[engine] = cli
+        elif cli:
+            plans.append((engine, "cli", cli))
         else:
-            print("skip: no Chromium-family browser (set CHROME_PATH)")
-    if browsers_wanted in ("all", "firefox"):
-        exe = find_firefox()
-        if exe:
-            available.append(("firefox", exe))
-        else:
-            print("skip: no Firefox (set FIREFOX_PATH)")
-    if browsers_wanted in ("all", "webkit"):
-        exe = webkit_python()
-        if exe:
-            available.append(("webkit", exe))
-        else:
-            print("skip: no interpreter with Playwright for WebKit "
-                  "(pip install playwright; playwright install webkit; "
-                  "set LCARS_PLAYWRIGHT_PYTHON to that interpreter)")
-    if not available:
+            hint = {"chrome": "set CHROME_PATH", "firefox": "set FIREFOX_PATH",
+                    "webkit": "pip install playwright; playwright install webkit; "
+                              "set LCARS_PLAYWRIGHT_PYTHON"}[engine]
+            print("skip: no way to run %s (%s)" % (engine, hint))
+    if not plans:
         print("SKIP: nothing to run the harness in")
         return 3
-    # A browser that quietly failed to install would otherwise shrink the run and
+    # An engine that quietly failed to install would otherwise shrink the run and
     # still report green. CI sets this so a missing engine is a failure.
     required = [b.strip() for b in os.environ.get("LCARS_REQUIRE_BROWSERS", "").split(",") if b.strip()]
-    missing = [b for b in required if b not in {name for name, _ in available}]
+    missing = [b for b in required if b not in {engine for engine, _, _ in plans}]
     if missing:
         print("\nFAIL: required browser(s) not available: %s" % ", ".join(missing))
         return 1
 
     failures = 0
     ran = 0
-    for browser, exe in available:
-        print("\n=== %s ===\n%s" % (browser, exe))
+    for engine, mode, exe in plans:
+        print("\n=== %s (%s) ===\n%s" % (engine, "playwright" if mode == "pw" else "installed", exe))
         for scale in (1, 4):
             label = "dpr%s" % scale
-            results, note, log_path = run_pass(browser, exe, page, scale)
-            print("\n--- %s %s ---" % (browser, label))
+            results, note, log_path = run_pass(engine, mode, exe, page, scale)
+            print("\n--- %s %s ---" % (engine, label))
             short = not results or len(results) < EXPECTED_SCENARIOS
+            if short and mode == "pw" and engine in cli_retry:
+                print("short via playwright (%s) - retrying with the installed browser" % (note or "cut short"))
+                results, note, log_path = run_pass(engine, "cli", cli_retry[engine], page, scale)
+                short = not results or len(results) < EXPECTED_SCENARIOS
             if short:
                 print("FAIL: %s" % (note or "cut short"))
                 print("browser output (%s):" % log_path)
