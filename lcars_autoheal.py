@@ -210,7 +210,7 @@ def run():
     try:
         proc = subprocess.run(
             [sys.executable, os.path.join(d, "apply.py"), "--target", target],
-            cwd=d, capture_output=True, text=True, timeout=REAPPLY_TIMEOUT)
+            cwd=d, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=REAPPLY_TIMEOUT)
         output = (proc.stdout or "") + (proc.stderr or "")
     except Exception as e:                                   # noqa: BLE001
         output = f"{type(e).__name__}: {e}"

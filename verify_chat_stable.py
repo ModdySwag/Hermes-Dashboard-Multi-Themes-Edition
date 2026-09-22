@@ -65,7 +65,7 @@ def read(path):
 
 
 def run(args, **kw):
-    return subprocess.run(args, capture_output=True, text=True, **kw)
+    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", **kw)
 
 
 def find_node(explicit=None):

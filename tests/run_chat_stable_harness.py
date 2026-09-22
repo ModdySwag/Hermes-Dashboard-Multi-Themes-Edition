@@ -108,7 +108,7 @@ def playwright_python():
         if not exe or not os.path.exists(exe):
             continue
         probe = subprocess.run([exe, "-c", "import playwright"],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         if probe.returncode == 0:
             return exe
     return None
@@ -307,7 +307,7 @@ def apply_and_build(live):
     target = os.path.join(dist, "index.html")
     engine = os.path.join(os.path.dirname(HERE), "apply_lcars_skin.py")
     proc = subprocess.run([sys.executable, engine, "--target", target],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise SystemExit("apply_lcars_skin.py failed: " + (proc.stderr or proc.stdout).strip()[:400])
     if "chat view stability present: yes" not in proc.stdout:

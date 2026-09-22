@@ -332,7 +332,7 @@ def migrate_autoheal_jobs():
         return 0
     try:
         listing = subprocess.run(cli + ["cron", "list", "--all"],
-                                 capture_output=True, text=True, timeout=60).stdout
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60).stdout
     except (OSError, subprocess.SubprocessError):
         return 0
 
@@ -346,7 +346,7 @@ def migrate_autoheal_jobs():
         if job and re.search(r"\bScript:\s*\S*" + re.escape(LEGACY_AUTOHEAL_NAME), line):
             try:
                 subprocess.run(cli + ["cron", "edit", job, "--script", AUTOHEAL_NAME],
-                               capture_output=True, text=True, timeout=60)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
                 print("[LCARS] auto-heal cron job " + job + " re-pointed at "
                       + AUTOHEAL_NAME)
                 fixed += 1
@@ -481,7 +481,7 @@ def _task_command(task_name):
     """(Command, Arguments) of an existing task, or None when it does not exist."""
     try:
         proc = subprocess.run(["schtasks", "/Query", "/TN", task_name, "/XML"],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:
@@ -552,7 +552,7 @@ def _register_task(task_name, pythonw, script):
         with open(path, "w", encoding="utf-16") as f:
             f.write(xml)
         proc = subprocess.run(["schtasks", "/Create", "/TN", task_name, "/XML", path, "/F"],
-                              capture_output=True, text=True, timeout=120)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     except (OSError, subprocess.SubprocessError):
         return False
     return proc.returncode == 0
@@ -755,7 +755,7 @@ def _systemd_timer_text():
 def _run_quiet(cmd):
     """Run a scheduler command best-effort. True on exit 0."""
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     except (OSError, subprocess.SubprocessError):
         return False
     return proc.returncode == 0
@@ -833,7 +833,7 @@ def delete_autostart_healer(platform=None):
     if plat == "win32":
         try:
             proc = subprocess.run(["schtasks", "/Delete", "/TN", AUTOSTART_TASK, "/F"],
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         except (OSError, subprocess.SubprocessError):
             return False
         return proc.returncode == 0
